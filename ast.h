@@ -27,7 +27,8 @@ enum class NodeType
     RETURN,
     BLOCK,
 
-    FUNCTION
+    FUNCTION,
+    CALL
 };
 
 struct ASTNode
@@ -196,6 +197,22 @@ inline void printAST(const ASTNode* node, int depth = 0)
         for (const ASTNode* child : node->children)
         {
             printAST(child, depth + 1);
+        }
+
+        return;
+    }
+
+    // CALL
+    if (node->type == NodeType::CALL)
+    {
+        for (int i = 0; i < depth + 1; ++i)
+            std::cout << "  ";
+
+        std::cout << "ARGUMENTS\n";
+
+        for (const ASTNode* argument : node->children)
+        {
+            printAST(argument, depth + 2);
         }
 
         return;

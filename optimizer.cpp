@@ -486,6 +486,8 @@ static bool copyAndConstantPropagation(
             inst.opcode == IROpcode::JUMP_IF_LE ||
             inst.opcode == IROpcode::JUMP_IF_GT ||
             inst.opcode == IROpcode::JUMP_IF_GE ||
+            inst.opcode == IROpcode::ARG ||
+            inst.opcode == IROpcode::CALL ||
             inst.opcode == IROpcode::RETURN)
         {
             valueMap.clear();
@@ -731,6 +733,18 @@ static bool eliminateDeadCode(
         // --------------------------------------------------------
 
         if (inst.opcode == IROpcode::PARAM)
+        {
+            newIR.push_back(inst);
+            continue;
+        }
+
+
+        // --------------------------------------------------------
+        // Protect ARG and CALL from DCE.
+        // --------------------------------------------------------
+
+        if (inst.opcode == IROpcode::ARG ||
+            inst.opcode == IROpcode::CALL)
         {
             newIR.push_back(inst);
             continue;

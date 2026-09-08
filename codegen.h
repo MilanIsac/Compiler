@@ -50,6 +50,12 @@ private:
         const std::string& label
     );
 
+    void emitCallArgument(
+        std::ostream& out,
+        const std::string& operand,
+        int index
+    );
+
     void resetFunctionState();
 
     int calculateStackSize() const;

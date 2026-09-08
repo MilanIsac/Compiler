@@ -168,6 +168,38 @@ std::string IRGenerator::generateExpression(ASTNode* node)
         return result;
     }
 
+    // ============================================================
+    // FUNCTION CALL
+    // ============================================================
+
+    if (node->type == NodeType::CALL)
+    {
+        for (ASTNode* argument : node->children)
+        {
+            std::string value = generateExpression(argument);
+
+            instructions.push_back({
+                IROpcode::ARG,
+                "",
+                value,
+                "",
+                ""
+            });
+        }
+
+        std::string result = newTemp();
+
+        instructions.push_back({
+            IROpcode::CALL,
+            result,
+            std::to_string(node->children.size()),
+            "",
+            node->value
+        });
+
+        return result;
+    }
+
     return "";
 }
 
@@ -1016,6 +1048,23 @@ void printIR(
                 std::cout
                     << "FUNCTION_END "
                     << inst.result;
+                break;
+
+            // ------------------------------------------------
+            // Function calls
+            // ------------------------------------------------
+
+            case IROpcode::ARG:
+                std::cout << "ARG " << inst.operand1;
+                break;
+
+            case IROpcode::CALL:
+                std::cout
+                    << inst.result
+                    << " = CALL "
+                    << inst.label
+                    << ", "
+                    << inst.operand1;
                 break;
 
             // ------------------------------------------------

@@ -197,6 +197,14 @@ void CodeGenerator::collectOperands(
                 addOperand(inst.result);
                 break;
 
+            case IROpcode::ARG:
+                addOperand(inst.operand1);
+                break;
+
+            case IROpcode::CALL:
+                addOperand(inst.result);
+                break;
+
             case IROpcode::LABEL:
             case IROpcode::JUMP:
             case IROpcode::FUNCTION_BEGIN:
@@ -322,6 +330,52 @@ void CodeGenerator::emitComparisonJump(
     }
 }
 
+void CodeGenerator::emitCallArgument(
+    std::ostream& out,
+    const std::string& operand,
+    int index
+)
+{
+    static const char* argumentRegisters[] =
+    {
+        "edi",
+        "esi",
+        "edx",
+        "ecx",
+        "r8d",
+        "r9d"
+    };
+
+    if (index < 0 || index >= 6)
+    {
+        std::cerr
+            << "Code generation error: "
+            << "more than 6 integer function arguments are not supported yet.\n";
+
+        return;
+    }
+
+    const char* reg = argumentRegisters[index];
+
+    if (isNumber(operand))
+    {
+        out << "    mov "
+            << reg
+            << ", "
+            << operand
+            << "\n";
+    }
+    else
+    {
+        int offset = getOffset(operand);
+        out << "    mov "
+            << reg
+            << ", DWORD PTR [rbp"
+            << (offset < 0 ? "" : "-")
+            << offset
+            << "]\n";
+    }
+}
 
 // ============================================================
 // Create unique function exit label
@@ -581,6 +635,8 @@ bool CodeGenerator::generate(
         // ====================================================
         // Generate instructions inside main
         // ====================================================
+
+        int argumentIndex = 0;
 
         for (const auto& inst : mainIR)
         {
@@ -1223,6 +1279,56 @@ bool CodeGenerator::generate(
                 case IROpcode::PARAM:
                 case IROpcode::FUNCTION_END:
                     break;
+
+                // ====================================================
+                // FUNCTION ARGUMENT
+                // ====================================================
+
+                case IROpcode::ARG:
+                {
+                    emitCallArgument(
+                        out,
+                        inst.operand1,
+                        argumentIndex
+                    );
+
+                    ++argumentIndex;
+                    break;
+                }
+
+                // ====================================================
+                // FUNCTION CALL
+                // ====================================================
+
+                case IROpcode::CALL:
+                {
+                    if (argumentIndex > 6)
+                    {
+                        cerr
+                            << "Code generation error: "
+                            << "function calls with more than 6 arguments "
+                            << "are not supported yet.\n";
+
+                        out.close();
+                        return false;
+                    }
+
+                    out << "    call "
+                        << inst.label
+                        << "\n";
+
+                    // Integer return value is in EAX.
+                    int offset = getOffset(inst.result);
+                    out << "    mov DWORD PTR [rbp"
+                        << (offset < 0 ? "" : "-")
+                        << offset
+                        << "], eax\n";
+
+                    // Ready for the next call.
+                    argumentIndex = 0;
+
+                    break;
+                }
             }
         }
 
@@ -1327,6 +1433,7 @@ bool CodeGenerator::generate(
         // --------------------------------------------------------
 
         parameterIndex = 0;
+        int argumentIndex = 0;
 
         for (const auto& inst : functionIR)
         {
@@ -1980,6 +2087,56 @@ bool CodeGenerator::generate(
 
                 case IROpcode::FUNCTION_END:
                 {
+                    break;
+                }
+
+                // ====================================================
+                // FUNCTION ARGUMENT
+                // ====================================================
+
+                case IROpcode::ARG:
+                {
+                    emitCallArgument(
+                        out,
+                        inst.operand1,
+                        argumentIndex
+                    );
+
+                    ++argumentIndex;
+                    break;
+                }
+
+                // ====================================================
+                // FUNCTION CALL
+                // ====================================================
+
+                case IROpcode::CALL:
+                {
+                    if (argumentIndex > 6)
+                    {
+                        cerr
+                            << "Code generation error: "
+                            << "function calls with more than 6 arguments "
+                            << "are not supported yet.\n";
+
+                        out.close();
+                        return false;
+                    }
+
+                    out << "    call "
+                        << inst.label
+                        << "\n";
+
+                    // Integer return value is in EAX.
+                    int offset = getOffset(inst.result);
+                    out << "    mov DWORD PTR [rbp"
+                        << (offset < 0 ? "" : "-")
+                        << offset
+                        << "], eax\n";
+
+                    // Ready for the next call.
+                    argumentIndex = 0;
+
                     break;
                 }
             }

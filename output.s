@@ -5,9 +5,14 @@
 main:
     push rbp
     mov rbp, rsp
+    sub rsp, 16
     xor eax, eax
 
-    mov eax, 0
+    mov edi, 10
+    mov esi, 5
+    call add
+    mov DWORD PTR [rbp-4], eax
+    mov eax, DWORD PTR [rbp-4]
     jmp .L_main_exit
 
 .L_main_exit:

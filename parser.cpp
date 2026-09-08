@@ -89,11 +89,19 @@ ASTNode* Parser::primary()
 {
     Token t = peek();
 
+    // ============================================================
+    // NUMBER
+    // ============================================================
+
     if (t.type == TokenType::NUMBER)
     {
         advance();
         return new ASTNode(NodeType::NUMBER, t.value);
     }
+
+    // ============================================================
+    // STRING
+    // ============================================================
 
     if (t.type == TokenType::STRING)
     {
@@ -101,46 +109,148 @@ ASTNode* Parser::primary()
         return new ASTNode(NodeType::STRING_LITERAL, t.value);
     }
 
+    // ============================================================
+    // IDENTIFIER or FUNCTION CALL
+    // ============================================================
+
     if (t.type == TokenType::IDENTIFIER)
     {
         advance();
+
+        std::string name = t.value;
+
+        // --------------------------------------------------------
+        // Function call
+        //
+        // example:
+        // add(10, 5)
+        // --------------------------------------------------------
+
+        if (match("("))
+        {
+            ASTNode* call = new ASTNode(NodeType::CALL, name);
+
+            // Arguments
+            if (!check(")"))
+            {
+                while (true)
+                {
+                    ASTNode* argument = expression();
+
+                    if (!argument)
+                    {
+                        freeAST(call);
+                        return nullptr;
+                    }
+
+                    call->children.push_back(argument);
+
+                    if (match(","))
+                    {
+                        continue;
+                    }
+
+                    break;
+                }
+            }
+
+            if (!match(")"))
+            {
+                std::cerr
+                    << "Parser error [line "
+                    << t.line
+                    << "]: expected ')' after function arguments\n";
+
+                freeAST(call);
+                return nullptr;
+            }
+
+            return call;
+        }
+
+        // --------------------------------------------------------
+        // Postfix ++
+        // --------------------------------------------------------
+
         if (match("++"))
         {
-            ASTNode* binOp = new ASTNode(NodeType::BINARY_OP, "+");
-            binOp->left = new ASTNode(NodeType::IDENTIFIER, t.value);
-            binOp->right = new ASTNode(NodeType::NUMBER, "1");
+            ASTNode* binOp =
+                new ASTNode(NodeType::BINARY_OP, "+");
 
-            ASTNode* assign = new ASTNode(NodeType::ASSIGN, "=");
-            assign->left = new ASTNode(NodeType::IDENTIFIER, t.value);
+            binOp->left =
+                new ASTNode(NodeType::IDENTIFIER, name);
+
+            binOp->right =
+                new ASTNode(NodeType::NUMBER, "1");
+
+            ASTNode* assign =
+                new ASTNode(NodeType::ASSIGN, "=");
+
+            assign->left =
+                new ASTNode(NodeType::IDENTIFIER, name);
+
             assign->right = binOp;
+
             return assign;
         }
+
+        // --------------------------------------------------------
+        // Postfix --
+        // --------------------------------------------------------
+
         if (match("--"))
         {
-            ASTNode* binOp = new ASTNode(NodeType::BINARY_OP, "-");
-            binOp->left = new ASTNode(NodeType::IDENTIFIER, t.value);
-            binOp->right = new ASTNode(NodeType::NUMBER, "1");
+            ASTNode* binOp =
+                new ASTNode(NodeType::BINARY_OP, "-");
 
-            ASTNode* assign = new ASTNode(NodeType::ASSIGN, "=");
-            assign->left = new ASTNode(NodeType::IDENTIFIER, t.value);
+            binOp->left =
+                new ASTNode(NodeType::IDENTIFIER, name);
+
+            binOp->right =
+                new ASTNode(NodeType::NUMBER, "1");
+
+            ASTNode* assign =
+                new ASTNode(NodeType::ASSIGN, "=");
+
+            assign->left =
+                new ASTNode(NodeType::IDENTIFIER, name);
+
             assign->right = binOp;
+
             return assign;
         }
-        return new ASTNode(NodeType::IDENTIFIER, t.value);
+
+        return new ASTNode(NodeType::IDENTIFIER, name);
     }
+
+    // ============================================================
+    // Parenthesized expression
+    // ============================================================
 
     if (match("("))
     {
         ASTNode* node = expression();
+
         if (!match(")"))
         {
-            std::cerr << "Parser error [line " << t.line << "]: expected ')' after expression\n";
+            std::cerr
+                << "Parser error [line "
+                << t.line
+                << "]: expected ')' after expression\n";
         }
+
         return node;
     }
 
-    std::cerr << "Parser error [line " << t.line << "]: unexpected token in factor: '" << t.value << "'\n";
+    std::cerr
+        << "Parser error [line "
+        << t.line
+        << "]: unexpected token in primary: '"
+        << t.value
+        << "'\n";
+
     advance();
+
     return nullptr;
 }
 

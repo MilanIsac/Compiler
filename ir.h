@@ -47,8 +47,11 @@ enum class IROpcode {
     FUNCTION_BEGIN,
     PARAM,
     FUNCTION_END,
+    
+    ARG,
+    CALL,
 
-    RETURN
+    RETURN,
 };
 
 struct IRInstruction {
