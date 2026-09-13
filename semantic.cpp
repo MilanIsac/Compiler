@@ -12,18 +12,141 @@ SemanticAnalyzer::SemanticAnalyzer()
       insideFunction(false),
       errorCount(0)
 {
+    // Start with global scope
+    scopes.push_back({});
 }
 
+
 // ============================================================
-// Collect all function definitions
+// Enter a new scope
+// ============================================================
+
+void SemanticAnalyzer::enterScope()
+{
+    scopes.push_back({});
+}
+
+
+// ============================================================
+// Exit current scope
+// ============================================================
+
+void SemanticAnalyzer::exitScope()
+{
+    if (scopes.size() > 1)
+    {
+        scopes.pop_back();
+    }
+}
+
+
+// ============================================================
+// Declare variable in current scope
+// ============================================================
+
+bool SemanticAnalyzer::declareVariable(
+    const std::string& name,
+    const std::string& type
+)
+{
+    if (scopes.empty())
+    {
+        return false;
+    }
+
+    auto& currentScope = scopes.back();
+
+    // Variable already exists in THIS scope
+    if (currentScope.find(name) != currentScope.end())
+    {
+        std::cerr
+            << "Semantic error: variable '"
+            << name
+            << "' is already declared in this scope.\n";
+
+        ++errorCount;
+
+        return false;
+    }
+
+    currentScope[name] = type;
+
+    return true;
+}
+
+
+// ============================================================
+// Look up variable
 //
-// We do this BEFORE analyzing the program.
-//
-// This allows:
-//
-//     add(10, 20)
-//
-// to work even if add() is defined later in the source.
+// Search from innermost scope → outermost scope
+// ============================================================
+
+std::string SemanticAnalyzer::lookupVariable(
+    const std::string& name
+)
+{
+    // Start at innermost scope
+    for (int i = static_cast<int>(scopes.size()) - 1;
+         i >= 0;
+         --i)
+    {
+        auto it = scopes[i].find(name);
+
+        if (it != scopes[i].end())
+        {
+            return it->second;
+        }
+    }
+
+    // Not found
+    return "unknown";
+}
+
+
+// ============================================================
+// Analyze entire program
+// ============================================================
+
+bool SemanticAnalyzer::analyze(
+    const std::vector<ASTNode*>& statements
+)
+{
+    errorCount = 0;
+
+    functionTable.clear();
+
+    currentFunctionName = "";
+    currentReturnType = "";
+    insideFunction = false;
+
+    // Start completely fresh with global scope
+    scopes.clear();
+    scopes.push_back({});
+
+    // --------------------------------------------------------
+    // First collect all functions.
+    //
+    // This allows a function to call another function even if
+    // that function appears later in the source code.
+    // --------------------------------------------------------
+
+    collectFunctions(statements);
+
+    // --------------------------------------------------------
+    // Analyze global statements
+    // --------------------------------------------------------
+
+    for (ASTNode* stmt : statements)
+    {
+        analyzeNode(stmt);
+    }
+
+    return errorCount == 0;
+}
+
+
+// ============================================================
+// Collect function definitions
 // ============================================================
 
 void SemanticAnalyzer::collectFunctions(
@@ -33,22 +156,30 @@ void SemanticAnalyzer::collectFunctions(
     for (ASTNode* node : statements)
     {
         if (!node)
+        {
             continue;
+        }
 
         if (node->type != NodeType::FUNCTION)
+        {
             continue;
+        }
 
         std::string functionName = node->value;
 
-        // Check for duplicate function definitions.
+        // ----------------------------------------------------
+        // Check duplicate function
+        // ----------------------------------------------------
+
         if (functionTable.find(functionName) != functionTable.end())
         {
             std::cerr
                 << "Semantic error: function '"
                 << functionName
-                << "' is already defined.\n";
+                << "' is already declared.\n";
 
             ++errorCount;
+
             continue;
         }
 
@@ -56,6 +187,8 @@ void SemanticAnalyzer::collectFunctions(
 
         // ----------------------------------------------------
         // Return type
+        //
+        // FUNCTION.fourth contains return type
         // ----------------------------------------------------
 
         if (node->fourth)
@@ -69,12 +202,16 @@ void SemanticAnalyzer::collectFunctions(
 
         // ----------------------------------------------------
         // Parameters
+        //
+        // FUNCTION.children contains parameter nodes
         // ----------------------------------------------------
 
         for (ASTNode* parameter : node->children)
         {
             if (!parameter)
+            {
                 continue;
+            }
 
             std::string parameterName = parameter->value;
 
@@ -85,6 +222,23 @@ void SemanticAnalyzer::collectFunctions(
                 parameterType = parameter->fourth->value;
             }
 
+            // Check duplicate parameter names
+            for (const std::string& existingName :
+                 info.parameterNames)
+            {
+                if (existingName == parameterName)
+                {
+                    std::cerr
+                        << "Semantic error: parameter '"
+                        << parameterName
+                        << "' appears more than once in function '"
+                        << functionName
+                        << "'.\n";
+
+                    ++errorCount;
+                }
+            }
+
             info.parameterNames.push_back(parameterName);
             info.parameterTypes.push_back(parameterType);
         }
@@ -93,145 +247,88 @@ void SemanticAnalyzer::collectFunctions(
     }
 }
 
-// ============================================================
-// Analyze entire program
-// ============================================================
-
-bool SemanticAnalyzer::analyze(
-    const std::vector<ASTNode*>& statements
-)
-{
-    errorCount = 0;
-
-    symbolTable.clear();
-    functionTable.clear();
-
-    currentFunctionName.clear();
-    currentReturnType.clear();
-    insideFunction = false;
-
-    // --------------------------------------------------------
-    // First collect ALL functions.
-    //
-    // This must happen before checking function calls.
-    // --------------------------------------------------------
-
-    collectFunctions(statements);
-
-    // --------------------------------------------------------
-    // Now analyze everything.
-    // --------------------------------------------------------
-
-    for (ASTNode* stmt : statements)
-    {
-        analyzeNode(stmt);
-    }
-
-    return errorCount == 0;
-}
 
 // ============================================================
-// Analyze a function
+// Analyze function
 // ============================================================
 
 void SemanticAnalyzer::analyzeFunction(ASTNode* node)
 {
     if (!node)
+    {
         return;
+    }
 
-    std::string functionName = node->value;
+    std::string previousFunctionName = currentFunctionName;
+    std::string previousReturnType = currentReturnType;
+    bool previousInsideFunction = insideFunction;
 
-    auto functionIt = functionTable.find(functionName);
+    // --------------------------------------------------------
+    // Enter function
+    // --------------------------------------------------------
+
+    currentFunctionName = node->value;
+
+    auto functionIt = functionTable.find(currentFunctionName);
 
     if (functionIt == functionTable.end())
+    {
         return;
+    }
 
-    const FunctionInfo& function = functionIt->second;
+    currentReturnType = functionIt->second.returnType;
 
-    // --------------------------------------------------------
-    // Save the old semantic state.
-    //
-    // A function should have its own variables.
-    // --------------------------------------------------------
-
-    std::unordered_map<std::string, std::string>
-        oldSymbolTable = symbolTable;
-
-    std::string oldFunctionName = currentFunctionName;
-    std::string oldReturnType = currentReturnType;
-    bool oldInsideFunction = insideFunction;
-
-    // --------------------------------------------------------
-    // Enter function.
-    // --------------------------------------------------------
-
-    symbolTable.clear();
-
-    currentFunctionName = functionName;
-    currentReturnType = function.returnType;
     insideFunction = true;
 
     // --------------------------------------------------------
-    // Add parameters to the function's symbol table.
+    // Function gets its own scope
+    // --------------------------------------------------------
+
+    enterScope();
+
+    // --------------------------------------------------------
+    // Add parameters to function scope
     // --------------------------------------------------------
 
     for (size_t i = 0;
-         i < function.parameterNames.size();
+         i < functionIt->second.parameterNames.size();
          ++i)
     {
-        const std::string& name =
-            function.parameterNames[i];
-
-        const std::string& type =
-            function.parameterTypes[i];
-
-        // Check duplicate parameter names.
-
-        if (symbolTable.find(name) != symbolTable.end())
-        {
-            std::cerr
-                << "Semantic error: duplicate parameter '"
-                << name
-                << "' in function '"
-                << functionName
-                << "'.\n";
-
-            ++errorCount;
-        }
-        else
-        {
-            symbolTable[name] = type;
-        }
+        declareVariable(
+            functionIt->second.parameterNames[i],
+            functionIt->second.parameterTypes[i]
+        );
     }
 
     // --------------------------------------------------------
-    // Analyze function body.
+    // Analyze function body
     // --------------------------------------------------------
 
-    if (node->left)
-    {
-        analyzeNode(node->left);
-    }
+    analyzeNode(node->left);
 
     // --------------------------------------------------------
-    // Restore previous state.
+    // Leave function scope
     // --------------------------------------------------------
 
-    symbolTable = oldSymbolTable;
+    exitScope();
 
-    currentFunctionName = oldFunctionName;
-    currentReturnType = oldReturnType;
-    insideFunction = oldInsideFunction;
+    // Restore previous state
+    currentFunctionName = previousFunctionName;
+    currentReturnType = previousReturnType;
+    insideFunction = previousInsideFunction;
 }
 
+
 // ============================================================
-// Analyze node
+// Analyze AST node
 // ============================================================
 
 void SemanticAnalyzer::analyzeNode(ASTNode* node)
 {
     if (!node)
+    {
         return;
+    }
 
     switch (node->type)
     {
@@ -245,50 +342,6 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
             break;
         }
 
-        // ====================================================
-        // ASSIGNMENT
-        // ====================================================
-
-        case NodeType::ASSIGN:
-        {
-            if (!node->left)
-                break;
-
-            std::string varName =
-                node->left->value;
-
-            std::string rhsType =
-                evaluateType(node->right);
-
-            // Existing compiler behavior:
-            // first assignment creates an int variable.
-
-            if (symbolTable.find(varName)
-                == symbolTable.end())
-            {
-                symbolTable[varName] = "int";
-            }
-
-            std::string variableType =
-                symbolTable[varName];
-
-            if (rhsType != "unknown" &&
-                rhsType != variableType)
-            {
-                std::cerr
-                    << "Type error: cannot assign "
-                    << rhsType
-                    << " to variable '"
-                    << varName
-                    << "' of type "
-                    << variableType
-                    << ".\n";
-
-                ++errorCount;
-            }
-
-            break;
-        }
 
         // ====================================================
         // VARIABLE DECLARATION
@@ -297,51 +350,40 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
         case NodeType::VAR_DECL:
         {
             if (!node->left)
+            {
                 break;
+            }
 
-            std::string varName =
-                node->left->value;
+            std::string variableName = node->left->value;
 
             std::string declaredType =
                 node->value.empty()
                     ? "int"
                     : node->value;
 
-            // Duplicate variable declaration.
+            // Declare in CURRENT scope
+            declareVariable(
+                variableName,
+                declaredType
+            );
 
-            if (symbolTable.find(varName)
-                != symbolTable.end())
-            {
-                std::cerr
-                    << "Semantic error: variable '"
-                    << varName
-                    << "' is already declared.\n";
-
-                ++errorCount;
-            }
-            else
-            {
-                symbolTable[varName] = declaredType;
-            }
-
-            // Check initializer.
-
+            // Check initializer
             if (node->right)
             {
                 std::string rhsType =
                     evaluateType(node->right);
 
-                if (rhsType != "unknown" &&
-                    rhsType != declaredType)
+                if (rhsType != declaredType &&
+                    rhsType != "unknown")
                 {
                     std::cerr
                         << "Type error: cannot initialize "
                         << declaredType
                         << " variable '"
-                        << varName
+                        << variableName
                         << "' with "
                         << rhsType
-                        << ".\n";
+                        << "\n";
 
                     ++errorCount;
                 }
@@ -349,6 +391,74 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
 
             break;
         }
+
+
+        // ====================================================
+        // ASSIGNMENT
+        // ====================================================
+
+        case NodeType::ASSIGN:
+        {
+            if (!node->left)
+            {
+                break;
+            }
+
+            std::string variableName =
+                node->left->value;
+
+            std::string rhsType =
+                evaluateType(node->right);
+
+            // ------------------------------------------------
+            // Search ALL visible scopes
+            // ------------------------------------------------
+
+            std::string variableType =
+                lookupVariable(variableName);
+
+            // ------------------------------------------------
+            // Preserve the old behavior:
+            //
+            // If an assignment is made to an unknown variable,
+            // treat it as an int variable in the current scope.
+            // ------------------------------------------------
+
+            if (variableType == "unknown")
+            {
+                std::cout
+                    << "Declaring variable '"
+                    << variableName
+                    << "' as int in current scope\n";
+
+                declareVariable(
+                    variableName,
+                    "int"
+                );
+
+                variableType = "int";
+            }
+
+            // ------------------------------------------------
+            // Type checking
+            // ------------------------------------------------
+
+            if (rhsType != variableType &&
+                rhsType != "unknown")
+            {
+                std::cerr
+                    << "Type error: cannot assign "
+                    << rhsType
+                    << " to variable '"
+                    << variableName
+                    << "'\n";
+
+                ++errorCount;
+            }
+
+            break;
+        }
+
 
         // ====================================================
         // IF
@@ -359,21 +469,29 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
             std::string conditionType =
                 evaluateType(node->left);
 
-            if (conditionType != "unknown" &&
-                conditionType != "int")
+            if (conditionType != "int" &&
+                conditionType != "unknown")
             {
                 std::cerr
-                    << "Type error: if condition "
-                    << "must be int/bool.\n";
+                    << "Type error: if condition must be int/bool\n";
 
                 ++errorCount;
             }
 
+            // ------------------------------------------------
+            // The block itself creates the scope.
+            // ------------------------------------------------
+
             analyzeNode(node->right);
-            analyzeNode(node->third);
+
+            if (node->third)
+            {
+                analyzeNode(node->third);
+            }
 
             break;
         }
+
 
         // ====================================================
         // WHILE
@@ -384,12 +502,11 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
             std::string conditionType =
                 evaluateType(node->left);
 
-            if (conditionType != "unknown" &&
-                conditionType != "int")
+            if (conditionType != "int" &&
+                conditionType != "unknown")
             {
                 std::cerr
-                    << "Type error: while condition "
-                    << "must be int/bool.\n";
+                    << "Type error: while condition must be int/bool\n";
 
                 ++errorCount;
             }
@@ -399,12 +516,25 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
             break;
         }
 
+
         // ====================================================
         // FOR
         // ====================================================
 
         case NodeType::FOR:
         {
+            // ------------------------------------------------
+            // A for-loop gets its own scope.
+            //
+            // This is important for:
+            //
+            // for (int i = 0; ... )
+            //
+            // i should disappear after the loop.
+            // ------------------------------------------------
+
+            enterScope();
+
             analyzeNode(node->left);
 
             if (node->right)
@@ -412,12 +542,11 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
                 std::string conditionType =
                     evaluateType(node->right);
 
-                if (conditionType != "unknown" &&
-                    conditionType != "int")
+                if (conditionType != "int" &&
+                    conditionType != "unknown")
                 {
                     std::cerr
-                        << "Type error: for condition "
-                        << "must be int/bool.\n";
+                        << "Type error: for condition must be int/bool\n";
 
                     ++errorCount;
                 }
@@ -426,8 +555,11 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
             analyzeNode(node->third);
             analyzeNode(node->fourth);
 
+            exitScope();
+
             break;
         }
+
 
         // ====================================================
         // RETURN
@@ -435,37 +567,48 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
 
         case NodeType::RETURN:
         {
-            std::string returnType = "void";
+            if (!insideFunction)
+            {
+                // Top-level return is allowed by our current
+                // compiler design.
+                if (node->left)
+                {
+                    evaluateType(node->left);
+                }
+
+                break;
+            }
+
+            std::string actualType = "void";
 
             if (node->left)
             {
-                returnType =
+                actualType =
                     evaluateType(node->left);
             }
 
-            // Only perform function return checking
-            // when actually inside a function.
+            // ------------------------------------------------
+            // Check return type
+            // ------------------------------------------------
 
-            if (insideFunction)
+            if (actualType != currentReturnType &&
+                actualType != "unknown")
             {
-                if (returnType != "unknown" &&
-                    returnType != currentReturnType)
-                {
-                    std::cerr
-                        << "Type error: function '"
-                        << currentFunctionName
-                        << "' should return "
-                        << currentReturnType
-                        << " but returns "
-                        << returnType
-                        << ".\n";
+                std::cerr
+                    << "Semantic error: function '"
+                    << currentFunctionName
+                    << "' should return "
+                    << currentReturnType
+                    << " but returns "
+                    << actualType
+                    << ".\n";
 
-                    ++errorCount;
-                }
+                ++errorCount;
             }
 
             break;
         }
+
 
         // ====================================================
         // BLOCK
@@ -473,16 +616,33 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
 
         case NodeType::BLOCK:
         {
+            // ------------------------------------------------
+            // Every block creates a new lexical scope.
+            //
+            // Example:
+            //
+            // {
+            //     int x = 10;
+            // }
+            //
+            // x disappears when we leave this block.
+            // ------------------------------------------------
+
+            enterScope();
+
             for (ASTNode* child : node->children)
             {
                 analyzeNode(child);
             }
 
+            exitScope();
+
             break;
         }
 
+
         // ====================================================
-        // DEFAULT
+        // Default
         // ====================================================
 
         default:
@@ -493,16 +653,17 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
     }
 }
 
+
 // ============================================================
 // Evaluate expression type
 // ============================================================
 
-std::string SemanticAnalyzer::evaluateType(
-    ASTNode* node
-)
+std::string SemanticAnalyzer::evaluateType(ASTNode* node)
 {
     if (!node)
+    {
         return "unknown";
+    }
 
     switch (node->type)
     {
@@ -511,18 +672,16 @@ std::string SemanticAnalyzer::evaluateType(
         // ====================================================
 
         case NodeType::NUMBER:
-        {
             return "int";
-        }
+
 
         // ====================================================
         // STRING
         // ====================================================
 
         case NodeType::STRING_LITERAL:
-        {
             return "string";
-        }
+
 
         // ====================================================
         // IDENTIFIER
@@ -530,140 +689,27 @@ std::string SemanticAnalyzer::evaluateType(
 
         case NodeType::IDENTIFIER:
         {
-            auto it =
-                symbolTable.find(node->value);
+            std::string type =
+                lookupVariable(node->value);
 
-            if (it == symbolTable.end())
+            if (type == "unknown")
             {
                 std::cerr
                     << "Semantic error: variable '"
                     << node->value
-                    << "' used before declaration.\n";
+                    << "' used before declaration!\n";
 
                 ++errorCount;
 
                 return "unknown";
             }
 
-            return it->second;
+            return type;
         }
 
-        // ====================================================
-        // FUNCTION CALL
-        // ====================================================
-
-        case NodeType::CALL:
-        {
-            std::string functionName =
-                node->value;
-
-            // ------------------------------------------------
-            // Does the function exist?
-            // ------------------------------------------------
-
-            auto functionIt =
-                functionTable.find(functionName);
-
-            if (functionIt == functionTable.end())
-            {
-                std::cerr
-                    << "Semantic error: function '"
-                    << functionName
-                    << "' is not declared.\n";
-
-                ++errorCount;
-
-                // Still analyze arguments so we can find
-                // additional errors.
-
-                for (ASTNode* argument : node->children)
-                {
-                    evaluateType(argument);
-                }
-
-                return "unknown";
-            }
-
-            const FunctionInfo& function =
-                functionIt->second;
-
-            // ------------------------------------------------
-            // Check argument count.
-            // ------------------------------------------------
-
-            if (node->children.size()
-                != function.parameterTypes.size())
-            {
-                std::cerr
-                    << "Semantic error: function '"
-                    << functionName
-                    << "' expects "
-                    << function.parameterTypes.size()
-                    << " argument(s), but "
-                    << node->children.size()
-                    << " were provided.\n";
-
-                ++errorCount;
-            }
-
-            // ------------------------------------------------
-            // Check each argument.
-            // ------------------------------------------------
-
-            size_t count =
-                node->children.size();
-
-            if (count >
-                function.parameterTypes.size())
-            {
-                count =
-                    function.parameterTypes.size();
-            }
-
-            for (size_t i = 0; i < count; ++i)
-            {
-                std::string argumentType =
-                    evaluateType(node->children[i]);
-
-                const std::string& parameterType =
-                    function.parameterTypes[i];
-
-                if (argumentType != "unknown" &&
-                    argumentType != parameterType)
-                {
-                    std::cerr
-                        << "Type error: argument "
-                        << (i + 1)
-                        << " of function '"
-                        << functionName
-                        << "' expects "
-                        << parameterType
-                        << " but got "
-                        << argumentType
-                        << ".\n";
-
-                    ++errorCount;
-                }
-            }
-
-            // Analyze extra arguments too.
-
-            for (size_t i = count;
-                 i < node->children.size();
-                 ++i)
-            {
-                evaluateType(node->children[i]);
-            }
-
-            // ------------------------------------------------
-            // The type of a function call is its return type.
-            // ------------------------------------------------
-
-            return function.returnType;
-        }
 
         // ====================================================
-        // BINARY OPERATIONS
+        // BINARY OPERATION
         // ====================================================
 
         case NodeType::BINARY_OP:
@@ -674,19 +720,17 @@ std::string SemanticAnalyzer::evaluateType(
             std::string rightType =
                 evaluateType(node->right);
 
-            if (leftType == "unknown" ||
-                rightType == "unknown")
-            {
-                return "unknown";
-            }
-
             if (leftType != "int" ||
                 rightType != "int")
             {
                 std::cerr
                     << "Type error in binary operation '"
                     << node->value
-                    << "': operands must be int.\n";
+                    << "': "
+                    << leftType
+                    << " vs "
+                    << rightType
+                    << "\n";
 
                 ++errorCount;
 
@@ -695,6 +739,7 @@ std::string SemanticAnalyzer::evaluateType(
 
             return "int";
         }
+
 
         // ====================================================
         // COMPARISON
@@ -708,29 +753,22 @@ std::string SemanticAnalyzer::evaluateType(
             std::string rightType =
                 evaluateType(node->right);
 
-            if (leftType == "unknown" ||
-                rightType == "unknown")
-            {
-                return "unknown";
-            }
-
             if (leftType != "int" ||
                 rightType != "int")
             {
                 std::cerr
-                    << "Type error: operands of comparison '"
+                    << "Type error in comparison '"
                     << node->value
-                    << "' must be int.\n";
+                    << "'\n";
 
                 ++errorCount;
 
                 return "unknown";
             }
 
-            // Comparisons produce int/bool-like values.
-
             return "int";
         }
+
 
         // ====================================================
         // LOGICAL AND / OR
@@ -745,19 +783,13 @@ std::string SemanticAnalyzer::evaluateType(
             std::string rightType =
                 evaluateType(node->right);
 
-            if (leftType == "unknown" ||
-                rightType == "unknown")
-            {
-                return "unknown";
-            }
-
             if (leftType != "int" ||
                 rightType != "int")
             {
                 std::cerr
-                    << "Type error: operands of '"
+                    << "Type error: operands of "
                     << node->value
-                    << "' must be int/bool.\n";
+                    << " must be int/bool\n";
 
                 ++errorCount;
 
@@ -766,6 +798,7 @@ std::string SemanticAnalyzer::evaluateType(
 
             return "int";
         }
+
 
         // ====================================================
         // LOGICAL NOT
@@ -776,14 +809,10 @@ std::string SemanticAnalyzer::evaluateType(
             std::string operandType =
                 evaluateType(node->left);
 
-            if (operandType == "unknown")
-                return "unknown";
-
             if (operandType != "int")
             {
                 std::cerr
-                    << "Type error: operand of ! "
-                    << "must be int/bool.\n";
+                    << "Type error: operand of ! must be int/bool\n";
 
                 ++errorCount;
 
@@ -793,13 +822,115 @@ std::string SemanticAnalyzer::evaluateType(
             return "int";
         }
 
+
         // ====================================================
-        // Other nodes
+        // FUNCTION CALL
+        // ====================================================
+
+        case NodeType::CALL:
+        {
+            auto functionIt =
+                functionTable.find(node->value);
+
+            // ------------------------------------------------
+            // Function doesn't exist
+            // ------------------------------------------------
+
+            if (functionIt == functionTable.end())
+            {
+                std::cerr
+                    << "Semantic error: function '"
+                    << node->value
+                    << "' is not declared.\n";
+
+                ++errorCount;
+
+                // Still analyze arguments
+                for (ASTNode* argument : node->children)
+                {
+                    evaluateType(argument);
+                }
+
+                return "unknown";
+            }
+
+            const FunctionInfo& function =
+                functionIt->second;
+
+            // ------------------------------------------------
+            // Check argument count
+            // ------------------------------------------------
+
+            if (node->children.size() !=
+                function.parameterTypes.size())
+            {
+                std::cerr
+                    << "Semantic error: function '"
+                    << node->value
+                    << "' expects "
+                    << function.parameterTypes.size()
+                    << " argument(s), but "
+                    << node->children.size()
+                    << " were provided.\n";
+
+                ++errorCount;
+            }
+
+            // ------------------------------------------------
+            // Check individual argument types
+            // ------------------------------------------------
+
+            size_t count =
+                node->children.size();
+
+            if (count > function.parameterTypes.size())
+            {
+                count = function.parameterTypes.size();
+            }
+
+            for (size_t i = 0; i < count; ++i)
+            {
+                std::string argumentType =
+                    evaluateType(node->children[i]);
+
+                std::string expectedType =
+                    function.parameterTypes[i];
+
+                if (argumentType != expectedType &&
+                    argumentType != "unknown")
+                {
+                    std::cerr
+                        << "Semantic error: argument "
+                        << (i + 1)
+                        << " of function '"
+                        << node->value
+                        << "' should be "
+                        << expectedType
+                        << " but got "
+                        << argumentType
+                        << ".\n";
+
+                    ++errorCount;
+                }
+            }
+
+            // Analyze extra arguments too
+            for (size_t i = count;
+                 i < node->children.size();
+                 ++i)
+            {
+                evaluateType(node->children[i]);
+            }
+
+            return function.returnType;
+        }
+
+
+        // ====================================================
+        // Default
         // ====================================================
 
         default:
-        {
             return "unknown";
-        }
     }
 }

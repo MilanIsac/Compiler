@@ -8,6 +8,10 @@
 #include <unordered_map>
 #include <vector>
 
+// ============================================================
+// Information about a function
+// ============================================================
+
 struct FunctionInfo
 {
     std::string returnType;
@@ -16,21 +20,50 @@ struct FunctionInfo
     std::vector<std::string> parameterTypes;
 };
 
+// ============================================================
+// Semantic Analyzer
+// ============================================================
+
 class SemanticAnalyzer
 {
 private:
-    // Variables currently visible.
-    std::unordered_map<std::string, std::string> symbolTable;
 
-    // All functions in the program.
+    // --------------------------------------------------------
+    // Scope stack
+    //
+    // scopes[0] = global scope
+    // scopes[1] = function/block scope
+    // scopes[2] = nested block
+    // etc.
+    // --------------------------------------------------------
+
+    std::vector<
+        std::unordered_map<std::string, std::string>
+    > scopes;
+
+    // --------------------------------------------------------
+    // Function table
+    // --------------------------------------------------------
+
     std::unordered_map<std::string, FunctionInfo> functionTable;
 
-    // Information about the function currently being analyzed.
+    // --------------------------------------------------------
+    // Current function information
+    // --------------------------------------------------------
+
     std::string currentFunctionName;
     std::string currentReturnType;
     bool insideFunction;
 
+    // --------------------------------------------------------
+    // Error counter
+    // --------------------------------------------------------
+
     int errorCount;
+
+    // --------------------------------------------------------
+    // Function collection
+    // --------------------------------------------------------
 
     void collectFunctions(
         const std::vector<ASTNode*>& statements
@@ -38,7 +71,25 @@ private:
 
     void analyzeFunction(ASTNode* node);
 
+    // --------------------------------------------------------
+    // Scope management
+    // --------------------------------------------------------
+
+    void enterScope();
+
+    void exitScope();
+
+    bool declareVariable(
+        const std::string& name,
+        const std::string& type
+    );
+
+    std::string lookupVariable(
+        const std::string& name
+    );
+
 public:
+
     SemanticAnalyzer();
 
     bool analyze(
