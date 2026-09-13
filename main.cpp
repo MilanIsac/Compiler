@@ -100,7 +100,20 @@ int main(int argc, char* argv[])
     }
     else
     {
-        std::cout << "Semantic analysis finished with " << analyzer.getErrorCount() << " error(s).\n";
+        std::cout << "Semantic analysis finished with "
+                << analyzer.getErrorCount()
+                << " error(s).\n";
+
+        // Stop compilation.
+        // Do not generate IR or assembly when
+        // semantic errors exist.
+
+        for (ASTNode* node : program)
+        {
+            freeAST(node);
+        }
+
+        return 1;
     }
 
     // --------------------------------------------------------

@@ -9,7 +9,7 @@ main:
     xor eax, eax
 
     mov edi, 10
-    mov esi, 5
+    mov esi, 20
     call add
     mov DWORD PTR [rbp-4], eax
     mov eax, DWORD PTR [rbp-4]
