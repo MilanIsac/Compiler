@@ -21,7 +21,10 @@ bool Lexer::isKeyword(const std::string& str)
         "string",
         "float",
         "double",
-        "void"
+        "void",
+        "bool",
+        "true",
+        "false"
     };
 
     return keywords.find(str) != keywords.end();

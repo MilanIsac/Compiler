@@ -110,6 +110,16 @@ ASTNode* Parser::primary()
     }
 
     // ============================================================
+    // BOOLEAN LITERAL
+    // ============================================================
+
+    if (t.type == TokenType::KEYWORD && (t.value == "true" || t.value == "false"))
+    {
+        advance();
+        return new ASTNode(NodeType::BOOL_LITERAL, t.value);
+    }
+
+    // ============================================================
     // IDENTIFIER or FUNCTION CALL
     // ============================================================
 
@@ -583,18 +593,13 @@ ASTNode* Parser::varDeclaration()
     {
         rhs = expression();
     }
-    else
-    {
-        // Default initialize to 0
-        rhs = new ASTNode(NodeType::NUMBER, "0");
-    }
 
     match(";");
 
-    ASTNode* assign = new ASTNode(NodeType::ASSIGN, "=");
-    assign->left = new ASTNode(NodeType::IDENTIFIER, idTok.value);
-    assign->right = rhs;
-    return assign;
+    ASTNode* decl = new ASTNode(NodeType::VAR_DECL, typeTok.value);
+    decl->left = new ASTNode(NodeType::IDENTIFIER, idTok.value);
+    decl->right = rhs;
+    return decl;
 }
 
 // ============================================================
@@ -681,10 +686,6 @@ ASTNode* Parser::parseReturn()
     if (!check(";") && !check("}"))
     {
         retVal = expression();
-    }
-    else
-    {
-        retVal = new ASTNode(NodeType::NUMBER, "0");
     }
 
     match(";");
@@ -834,8 +835,7 @@ ASTNode* Parser::parseFor()
     if (!check(";"))
     {
         Token t = peek();
-        if (t.type == TokenType::KEYWORD && (t.value == "int" || t.value == "float" ||
-            t.value == "char" || t.value == "double" || t.value == "string" || t.value == "void"))
+        if (isTypeKeyword(t))
         {
             init = varDeclaration(); // varDeclaration already consumes the ';'
         }
@@ -1018,11 +1018,12 @@ bool Parser::isTypeKeyword(const Token& token) const
         return false;
 
     return token.value == "int" ||
-           token.value == "float" ||
-           token.value == "double" ||
-           token.value == "char" ||
+           token.value == "bool" ||
            token.value == "string" ||
-           token.value == "void";
+           token.value == "void" ||
+           token.value == "char" ||
+           token.value == "float" ||
+           token.value == "double";
 }
 
 

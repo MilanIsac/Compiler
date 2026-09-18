@@ -10,6 +10,7 @@ enum class NodeType
     NUMBER,
     IDENTIFIER,
     STRING_LITERAL,
+    BOOL_LITERAL,
 
     BINARY_OP,
     COMPARISON,
@@ -35,6 +36,7 @@ struct ASTNode
 {
     NodeType type;
     std::string value;
+    std::string inferredType;
 
     ASTNode* left;
     ASTNode* right;
@@ -46,6 +48,7 @@ struct ASTNode
     ASTNode(NodeType t, const std::string& v = "")
         : type(t),
           value(v),
+          inferredType(""),
           left(nullptr),
           right(nullptr),
           third(nullptr),

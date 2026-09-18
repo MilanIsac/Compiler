@@ -49,6 +49,11 @@ std::string IRGenerator::generateExpression(ASTNode* node)
         return node->value;
     }
 
+    if (node->type == NodeType::BOOL_LITERAL)
+    {
+        return (node->value == "true" || node->value == "1") ? "1" : "0";
+    }
+
     // --------------------------------------------------------
     // Binary operation
     // --------------------------------------------------------
