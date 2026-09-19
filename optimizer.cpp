@@ -42,7 +42,7 @@ static bool isNumber(const std::string& value)
 // t25
 // ============================================================
 
-static bool isTemp(const std::string& name)
+[[maybe_unused]] static bool isTemp(const std::string& name)
 {
     if (name.size() < 2 || name[0] != 't')
         return false;
@@ -473,7 +473,36 @@ static bool copyAndConstantPropagation(
 
 
         // --------------------------------------------------------
-        // Control-flow boundaries reset local knowledge.
+        // Propagate operand1
+        // --------------------------------------------------------
+
+        if (!inst.operand1.empty())
+        {
+            auto it = valueMap.find(inst.operand1);
+            if (it != valueMap.end())
+            {
+                inst.operand1 = it->second;
+                changed = true;
+            }
+        }
+
+        // --------------------------------------------------------
+        // Propagate operand2
+        // --------------------------------------------------------
+
+        if (!inst.operand2.empty())
+        {
+            auto it = valueMap.find(inst.operand2);
+            if (it != valueMap.end())
+            {
+                inst.operand2 = it->second;
+                changed = true;
+            }
+        }
+
+        // --------------------------------------------------------
+        // Control-flow boundaries and calls reset local knowledge.
+        // (Handled after propagating operand values for returns/branches!)
         // --------------------------------------------------------
 
         if (inst.opcode == IROpcode::LABEL ||
@@ -486,7 +515,6 @@ static bool copyAndConstantPropagation(
             inst.opcode == IROpcode::JUMP_IF_LE ||
             inst.opcode == IROpcode::JUMP_IF_GT ||
             inst.opcode == IROpcode::JUMP_IF_GE ||
-            inst.opcode == IROpcode::ARG ||
             inst.opcode == IROpcode::CALL ||
             inst.opcode == IROpcode::RETURN)
         {
@@ -494,40 +522,10 @@ static bool copyAndConstantPropagation(
             continue;
         }
 
-
-        // --------------------------------------------------------
-        // Propagate operand1
-        // --------------------------------------------------------
-
-        if (!inst.operand1.empty())
+        if (inst.opcode == IROpcode::ARG)
         {
-            auto it =
-                valueMap.find(inst.operand1);
-
-            if (it != valueMap.end())
-            {
-                inst.operand1 = it->second;
-                changed = true;
-            }
+            continue;
         }
-
-
-        // --------------------------------------------------------
-        // Propagate operand2
-        // --------------------------------------------------------
-
-        if (!inst.operand2.empty())
-        {
-            auto it =
-                valueMap.find(inst.operand2);
-
-            if (it != valueMap.end())
-            {
-                inst.operand2 = it->second;
-                changed = true;
-            }
-        }
-
 
         // --------------------------------------------------------
         // Record assignment
@@ -776,12 +774,14 @@ static bool eliminateDeadCode(
         // if t1 is never used, remove it.
         // --------------------------------------------------------
 
-        if (isTemp(inst.result) &&
-            usedVars.find(inst.result) ==
-                usedVars.end())
+        if (!inst.result.empty() &&
+            usedVars.find(inst.result) == usedVars.end())
         {
-            // Do not remove PARAM/FUNCTION markers.
-            if (inst.opcode != IROpcode::PARAM)
+            // Do not remove PARAM/CALL/FUNCTION markers.
+            if (inst.opcode != IROpcode::PARAM &&
+                inst.opcode != IROpcode::CALL &&
+                inst.opcode != IROpcode::FUNCTION_BEGIN &&
+                inst.opcode != IROpcode::FUNCTION_END)
             {
                 changed = true;
                 continue;
@@ -814,6 +814,235 @@ static bool eliminateDeadCode(
 
 
 // ============================================================
+// Pass 6
+// Strength reduction
+//
+// Converts expensive operations into cheaper equivalents.
+// Example:
+// x * 2  ->  x << 1
+// x * 8  ->  x << 3
+// ============================================================
+
+static bool strengthReduction(std::vector<IRInstruction>& ir)
+{
+    bool changed = false;
+
+    for (auto& inst : ir)
+    {
+        if (inst.opcode == IROpcode::MUL)
+        {
+            // Case 1: x * (2^k) -> x << k
+            if (isNumber(inst.operand2))
+            {
+                long long b = std::stoll(inst.operand2);
+                if (b > 1 && (b & (b - 1)) == 0)
+                {
+                    int shift = 0;
+                    while ((1LL << shift) < b)
+                        ++shift;
+
+                    inst.opcode = IROpcode::SHL;
+                    inst.operand2 = std::to_string(shift);
+                    changed = true;
+                    continue;
+                }
+            }
+
+            // Case 2: (2^k) * x -> x << k
+            if (isNumber(inst.operand1))
+            {
+                long long a = std::stoll(inst.operand1);
+                if (a > 1 && (a & (a - 1)) == 0)
+                {
+                    int shift = 0;
+                    while ((1LL << shift) < a)
+                        ++shift;
+
+                    inst.opcode = IROpcode::SHL;
+                    inst.operand1 = inst.operand2;
+                    inst.operand2 = std::to_string(shift);
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+    }
+
+    return changed;
+}
+
+
+// ============================================================
+// Pass 7
+// Common Subexpression Elimination (CSE)
+//
+// Reuses previously computed results for identical expressions.
+// Example:
+// t1 = x + y
+// t2 = x + y
+// becomes:
+// t1 = x + y
+// t2 = t1
+// ============================================================
+
+static bool eliminateCommonSubexpressions(std::vector<IRInstruction>& ir)
+{
+    bool changed = false;
+
+    std::unordered_map<std::string, std::string> exprMap;
+    std::unordered_map<std::string, std::unordered_set<std::string>> varToKeys;
+
+    auto invalidateVar = [&](const std::string& var) {
+        if (var.empty())
+            return;
+        auto it = varToKeys.find(var);
+        if (it != varToKeys.end())
+        {
+            for (const auto& key : it->second)
+            {
+                exprMap.erase(key);
+            }
+            varToKeys.erase(it);
+        }
+        for (auto eit = exprMap.begin(); eit != exprMap.end(); )
+        {
+            if (eit->second == var)
+            {
+                eit = exprMap.erase(eit);
+            }
+            else
+            {
+                ++eit;
+            }
+        }
+    };
+
+    auto clearState = [&]() {
+        exprMap.clear();
+        varToKeys.clear();
+    };
+
+    for (auto& inst : ir)
+    {
+        if (inst.opcode == IROpcode::LABEL ||
+            inst.opcode == IROpcode::JUMP ||
+            inst.opcode == IROpcode::JUMP_IF_FALSE ||
+            inst.opcode == IROpcode::JUMP_IF_TRUE ||
+            inst.opcode == IROpcode::JUMP_IF_EQ ||
+            inst.opcode == IROpcode::JUMP_IF_NE ||
+            inst.opcode == IROpcode::JUMP_IF_LT ||
+            inst.opcode == IROpcode::JUMP_IF_LE ||
+            inst.opcode == IROpcode::JUMP_IF_GT ||
+            inst.opcode == IROpcode::JUMP_IF_GE ||
+            inst.opcode == IROpcode::CALL ||
+            inst.opcode == IROpcode::RETURN)
+        {
+            clearState();
+            continue;
+        }
+
+        if (inst.opcode == IROpcode::PARAM)
+        {
+            invalidateVar(inst.result);
+            continue;
+        }
+
+        bool isBinOp =
+            (inst.opcode == IROpcode::ADD ||
+             inst.opcode == IROpcode::SUB ||
+             inst.opcode == IROpcode::MUL ||
+             inst.opcode == IROpcode::DIV ||
+             inst.opcode == IROpcode::MOD ||
+             inst.opcode == IROpcode::BIT_AND ||
+             inst.opcode == IROpcode::BIT_OR ||
+             inst.opcode == IROpcode::BIT_XOR ||
+             inst.opcode == IROpcode::SHL ||
+             inst.opcode == IROpcode::SHR ||
+             inst.opcode == IROpcode::CMP_EQ ||
+             inst.opcode == IROpcode::CMP_NE ||
+             inst.opcode == IROpcode::CMP_LT ||
+             inst.opcode == IROpcode::CMP_LE ||
+             inst.opcode == IROpcode::CMP_GT ||
+             inst.opcode == IROpcode::CMP_GE);
+
+        bool isUnaryOp = (inst.opcode == IROpcode::NEG);
+
+        if (isBinOp)
+        {
+            std::string op1 = inst.operand1;
+            std::string op2 = inst.operand2;
+
+            bool isCommutative =
+                (inst.opcode == IROpcode::ADD ||
+                 inst.opcode == IROpcode::MUL ||
+                 inst.opcode == IROpcode::BIT_AND ||
+                 inst.opcode == IROpcode::BIT_OR ||
+                 inst.opcode == IROpcode::BIT_XOR ||
+                 inst.opcode == IROpcode::CMP_EQ ||
+                 inst.opcode == IROpcode::CMP_NE);
+
+            if (isCommutative && op1 > op2)
+            {
+                std::swap(op1, op2);
+            }
+
+            std::string key = std::to_string(static_cast<int>(inst.opcode)) + ":" + op1 + ":" + op2;
+
+            auto it = exprMap.find(key);
+            if (it != exprMap.end() && it->second != inst.result)
+            {
+                inst.opcode = IROpcode::ASSIGN;
+                inst.operand1 = it->second;
+                inst.operand2 = "";
+                changed = true;
+                invalidateVar(inst.result);
+            }
+            else
+            {
+                invalidateVar(inst.result);
+                exprMap[key] = inst.result;
+                if (!isNumber(inst.operand1))
+                    varToKeys[inst.operand1].insert(key);
+                if (!isNumber(inst.operand2))
+                    varToKeys[inst.operand2].insert(key);
+                varToKeys[inst.result].insert(key);
+            }
+        }
+        else if (isUnaryOp)
+        {
+            std::string key = "NEG:" + inst.operand1;
+            auto it = exprMap.find(key);
+            if (it != exprMap.end() && it->second != inst.result)
+            {
+                inst.opcode = IROpcode::ASSIGN;
+                inst.operand1 = it->second;
+                inst.operand2 = "";
+                changed = true;
+                invalidateVar(inst.result);
+            }
+            else
+            {
+                invalidateVar(inst.result);
+                exprMap[key] = inst.result;
+                if (!isNumber(inst.operand1))
+                    varToKeys[inst.operand1].insert(key);
+                varToKeys[inst.result].insert(key);
+            }
+        }
+        else
+        {
+            if (!inst.result.empty())
+            {
+                invalidateVar(inst.result);
+            }
+        }
+    }
+
+    return changed;
+}
+
+
+// ============================================================
 // Optimize ONE region
 //
 // A region is either:
@@ -838,6 +1067,10 @@ static bool optimizeRegion(
         bool changed = false;
 
         changed |= constantFold(region);
+
+        changed |= strengthReduction(region);
+
+        changed |= eliminateCommonSubexpressions(region);
 
         changed |= foldBranchConditions(region);
 

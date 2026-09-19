@@ -52,6 +52,7 @@ enum class IROpcode {
     CALL,
 
     RETURN,
+    PHI,
 };
 
 struct IRInstruction {

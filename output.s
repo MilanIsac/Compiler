@@ -1,8 +1,8 @@
 .intel_syntax noprefix
 .text
 
-.globl add
-add:
+.globl cse
+cse:
     push rbp
     mov rbp, rsp
     sub rsp, 32
@@ -15,8 +15,12 @@ add:
     add eax, ecx
     mov DWORD PTR [rbp-20], eax
     mov eax, DWORD PTR [rbp-20]
-    jmp .L_add_exit
-.L_add_exit:
+    mov ecx, DWORD PTR [rbp-20]
+    add eax, ecx
+    mov DWORD PTR [rbp-28], eax
+    mov eax, DWORD PTR [rbp-28]
+    jmp .L_cse_exit
+.L_cse_exit:
     mov rsp, rbp
     pop rbp
     ret

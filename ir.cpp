@@ -1082,6 +1082,17 @@ void printIR(
                     << inst.operand1;
                 break;
 
+            case IROpcode::PHI:
+                std::cout
+                    << inst.result
+                    << " = PHI "
+                    << inst.operand1;
+                if (!inst.operand2.empty())
+                {
+                    std::cout << ", " << inst.operand2;
+                }
+                break;
+
             // ------------------------------------------------
             // Unknown
             // ------------------------------------------------

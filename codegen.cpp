@@ -209,6 +209,7 @@ void CodeGenerator::collectOperands(
             case IROpcode::JUMP:
             case IROpcode::FUNCTION_BEGIN:
             case IROpcode::FUNCTION_END:
+            case IROpcode::PHI:
 
                 break;
         }
@@ -1278,6 +1279,7 @@ bool CodeGenerator::generate(
                 case IROpcode::FUNCTION_BEGIN:
                 case IROpcode::PARAM:
                 case IROpcode::FUNCTION_END:
+                case IROpcode::PHI:
                     break;
 
                 // ====================================================
@@ -2086,6 +2088,7 @@ bool CodeGenerator::generate(
                 // =================================================
 
                 case IROpcode::FUNCTION_END:
+                case IROpcode::PHI:
                 {
                     break;
                 }
