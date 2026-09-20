@@ -516,6 +516,9 @@ static bool copyAndConstantPropagation(
             inst.opcode == IROpcode::JUMP_IF_GT ||
             inst.opcode == IROpcode::JUMP_IF_GE ||
             inst.opcode == IROpcode::CALL ||
+            inst.opcode == IROpcode::ADDRESS ||
+            inst.opcode == IROpcode::LOAD ||
+            inst.opcode == IROpcode::STORE ||
             inst.opcode == IROpcode::RETURN)
         {
             valueMap.clear();
@@ -742,7 +745,8 @@ static bool eliminateDeadCode(
         // --------------------------------------------------------
 
         if (inst.opcode == IROpcode::ARG ||
-            inst.opcode == IROpcode::CALL)
+            inst.opcode == IROpcode::CALL ||
+            inst.opcode == IROpcode::STORE)
         {
             newIR.push_back(inst);
             continue;
@@ -935,6 +939,9 @@ static bool eliminateCommonSubexpressions(std::vector<IRInstruction>& ir)
             inst.opcode == IROpcode::JUMP_IF_GT ||
             inst.opcode == IROpcode::JUMP_IF_GE ||
             inst.opcode == IROpcode::CALL ||
+            inst.opcode == IROpcode::ADDRESS ||
+            inst.opcode == IROpcode::LOAD ||
+            inst.opcode == IROpcode::STORE ||
             inst.opcode == IROpcode::RETURN)
         {
             clearState();

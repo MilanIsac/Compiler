@@ -13,6 +13,10 @@ private:
     // Stack slot for every variable / temporary.
     std::unordered_map<std::string, int> stackOffsets;
 
+    // Base stack offset and element count for arrays.
+    std::unordered_map<std::string, int> arrayOffsets;
+    std::unordered_map<std::string, int> arraySizes;
+
     // Current stack size in bytes.
     int stackSize;
 
@@ -40,6 +44,19 @@ private:
         std::ostream& out,
         const std::string& operand,
         const std::string& targetRegister
+    );
+
+    void emitArrayAddress(
+        std::ostream& out,
+        const std::string& arrayName,
+        const std::string& byteOffset,
+        const std::string& targetRegister
+    );
+
+    void storeAddress(
+        std::ostream& out,
+        const std::string& name,
+        const std::string& sourceRegister
     );
 
     void emitComparisonJump(

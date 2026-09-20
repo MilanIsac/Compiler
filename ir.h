@@ -9,6 +9,12 @@
 enum class IROpcode {
     ASSIGN,
 
+    // Arrays / memory
+    ARRAY_DECL,
+    ADDRESS,
+    LOAD,
+    STORE,
+
     ADD,
     SUB,
     MUL,

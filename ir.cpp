@@ -58,6 +58,55 @@ std::string IRGenerator::generateExpression(ASTNode* node)
     // Binary operation
     // --------------------------------------------------------
 
+    // --------------------------------------------------------
+    // Array access
+    //
+    // arr[i]:
+    //   offset = i * 4
+    //   address = ADDRESS arr, offset
+    //   value = LOAD address
+    // --------------------------------------------------------
+    if (node->type == NodeType::ARRAY_ACCESS)
+    {
+        std::string index =
+            generateExpression(node->left);
+
+        std::string offset =
+            newTemp();
+
+        instructions.push_back({
+            IROpcode::MUL,
+            offset,
+            index,
+            "4",
+            ""
+        });
+
+        std::string address =
+            newTemp();
+
+        instructions.push_back({
+            IROpcode::ADDRESS,
+            address,
+            node->value,
+            offset,
+            ""
+        });
+
+        std::string value =
+            newTemp();
+
+        instructions.push_back({
+            IROpcode::LOAD,
+            value,
+            address,
+            "",
+            ""
+        });
+
+        return value;
+    }
+
     if (node->type == NodeType::BINARY_OP)
     {
         std::string left = generateExpression(node->left);
@@ -487,6 +536,26 @@ void IRGenerator::generate(ASTNode* node)
     }
 
     // ========================================================
+    // Array declaration
+    // ========================================================
+
+    if (node->type == NodeType::ARRAY_DECL)
+    {
+        if (!node->left || !node->right)
+            return;
+
+        instructions.push_back({
+            IROpcode::ARRAY_DECL,
+            node->left->value,
+            node->right->value,
+            "",
+            ""
+        });
+
+        return;
+    }
+
+    // ========================================================
     // Assignment / Variable declaration
     // ========================================================
 
@@ -500,6 +569,46 @@ void IRGenerator::generate(ASTNode* node)
 
         std::string value =
             generateExpression(node->right);
+
+        // Array element assignment:
+        //     arr[i] = value;
+        if (node->left->type == NodeType::ARRAY_ACCESS)
+        {
+            std::string index =
+                generateExpression(node->left->left);
+
+            std::string offset =
+                newTemp();
+
+            instructions.push_back({
+                IROpcode::MUL,
+                offset,
+                index,
+                "4",
+                ""
+            });
+
+            std::string address =
+                newTemp();
+
+            instructions.push_back({
+                IROpcode::ADDRESS,
+                address,
+                node->left->value,
+                offset,
+                ""
+            });
+
+            instructions.push_back({
+                IROpcode::STORE,
+                "",
+                address,
+                value,
+                ""
+            });
+
+            return;
+        }
 
         instructions.push_back({
             IROpcode::ASSIGN,
@@ -831,6 +940,38 @@ void printIR(
             // ------------------------------------------------
             // Arithmetic
             // ------------------------------------------------
+
+            case IROpcode::ARRAY_DECL:
+                std::cout
+                    << "ARRAY_DECL "
+                    << inst.result
+                    << ", "
+                    << inst.operand1;
+                break;
+
+            case IROpcode::ADDRESS:
+                std::cout
+                    << inst.result
+                    << " = ADDRESS "
+                    << inst.operand1
+                    << ", "
+                    << inst.operand2;
+                break;
+
+            case IROpcode::LOAD:
+                std::cout
+                    << inst.result
+                    << " = LOAD "
+                    << inst.operand1;
+                break;
+
+            case IROpcode::STORE:
+                std::cout
+                    << "STORE "
+                    << inst.operand1
+                    << ", "
+                    << inst.operand2;
+                break;
 
             case IROpcode::ADD:
                 std::cout

@@ -60,6 +60,8 @@ bool CodeGenerator::isNumber(const string& value) const
 void CodeGenerator::resetFunctionState()
 {
     stackOffsets.clear();
+    arrayOffsets.clear();
+    arraySizes.clear();
     stackSize = 0;
 
     currentFunction.clear();
@@ -80,17 +82,19 @@ void CodeGenerator::resetFunctionState()
 
 int CodeGenerator::calculateStackSize() const
 {
-    if (stackOffsets.empty()) {
-        return 0;
+    int bytes = 0;
+
+    for (const auto& item : arraySizes)
+    {
+        bytes += item.second * 4;
     }
 
-    int bytes =
-        static_cast<int>(stackOffsets.size()) * 8;
+    bytes += static_cast<int>(stackOffsets.size()) * 8;
 
-    // Round up to 16-byte alignment.
-    bytes = (bytes + 15) & ~15;
+    if (bytes == 0)
+        return 0;
 
-    return bytes;
+    return (bytes + 15) & ~15;
 }
 
 
@@ -103,32 +107,65 @@ void CodeGenerator::collectOperands(
 )
 {
     stackOffsets.clear();
+    arrayOffsets.clear();
+    arraySizes.clear();
 
+    // --------------------------------------------------------
+    // First allocate array storage.
+    //
+    // Every int occupies 4 bytes.
+    // --------------------------------------------------------
     int nextOffset = -4;
+
+    for (const auto& inst : instructions)
+    {
+        if (inst.opcode == IROpcode::ARRAY_DECL)
+        {
+            int size = 0;
+
+            try
+            {
+                size = std::stoi(inst.operand1);
+            }
+            catch (...)
+            {
+                size = 0;
+            }
+
+            if (size <= 0)
+                continue;
+
+            arrayOffsets[inst.result] = nextOffset;
+            arraySizes[inst.result] = size;
+
+            nextOffset -= size * 4;
+        }
+    }
+
+    // --------------------------------------------------------
+    // Allocate ordinary variables and temporaries.
+    // --------------------------------------------------------
+    auto isArrayName = [&](const string& name)
+    {
+        return arrayOffsets.find(name) != arrayOffsets.end();
+    };
 
     auto addOperand = [&](const string& operand)
     {
-        if (operand.empty()) {
+        if (operand.empty() || isNumber(operand))
             return;
-        }
 
-        if (isNumber(operand)) {
-            return;
-        }
-
-        // Labels are not variables.
         if (!operand.empty() &&
             (operand[0] == '.' ||
-             operand.find("label") == 0)) {
+             operand.find("label") == 0))
             return;
-        }
 
-        if (stackOffsets.find(operand) ==
-            stackOffsets.end())
+        if (isArrayName(operand))
+            return;
+
+        if (stackOffsets.find(operand) == stackOffsets.end())
         {
             stackOffsets[operand] = nextOffset;
-
-            // Move by 8 bytes.
             nextOffset -= 8;
         }
     };
@@ -137,6 +174,25 @@ void CodeGenerator::collectOperands(
     {
         switch (inst.opcode)
         {
+            case IROpcode::ARRAY_DECL:
+                break;
+
+            case IROpcode::ADDRESS:
+                // operand1 is an array name, operand2 is a byte offset.
+                addOperand(inst.result);
+                addOperand(inst.operand2);
+                break;
+
+            case IROpcode::LOAD:
+                addOperand(inst.result);
+                addOperand(inst.operand1);
+                break;
+
+            case IROpcode::STORE:
+                addOperand(inst.operand1);
+                addOperand(inst.operand2);
+                break;
+
             case IROpcode::ASSIGN:
                 addOperand(inst.result);
                 addOperand(inst.operand1);
@@ -158,21 +214,18 @@ void CodeGenerator::collectOperands(
             case IROpcode::CMP_LE:
             case IROpcode::CMP_GT:
             case IROpcode::CMP_GE:
-
                 addOperand(inst.result);
                 addOperand(inst.operand1);
                 addOperand(inst.operand2);
                 break;
 
             case IROpcode::NEG:
-
                 addOperand(inst.result);
                 addOperand(inst.operand1);
                 break;
 
             case IROpcode::JUMP_IF_FALSE:
             case IROpcode::JUMP_IF_TRUE:
-
                 addOperand(inst.operand1);
                 break;
 
@@ -182,18 +235,15 @@ void CodeGenerator::collectOperands(
             case IROpcode::JUMP_IF_LE:
             case IROpcode::JUMP_IF_GT:
             case IROpcode::JUMP_IF_GE:
-
                 addOperand(inst.operand1);
                 addOperand(inst.operand2);
                 break;
 
             case IROpcode::RETURN:
-
                 addOperand(inst.operand1);
                 break;
 
             case IROpcode::PARAM:
-
                 addOperand(inst.result);
                 break;
 
@@ -210,14 +260,12 @@ void CodeGenerator::collectOperands(
             case IROpcode::FUNCTION_BEGIN:
             case IROpcode::FUNCTION_END:
             case IROpcode::PHI:
-
                 break;
         }
     }
 
     stackSize = calculateStackSize();
 }
-
 
 // ============================================================
 // Get stack offset
@@ -282,6 +330,73 @@ void CodeGenerator::emitOperand(
         << "]\n";
 }
 
+
+// ============================================================
+// Emit array/memory address
+// ============================================================
+
+void CodeGenerator::emitArrayAddress(
+    ostream& out,
+    const string& arrayName,
+    const string& byteOffset,
+    const string& targetRegister)
+{
+    auto it = arrayOffsets.find(arrayName);
+
+    if (it == arrayOffsets.end())
+    {
+        cerr << "Code generation error: unknown array '"
+             << arrayName << "'.\n";
+        out << "    xor " << targetRegister
+            << ", " << targetRegister << "\n";
+        return;
+    }
+
+    // Array base.
+    out << "    lea " << targetRegister
+        << ", [rbp"
+        << it->second
+        << "]\n";
+
+    if (!byteOffset.empty() && byteOffset != "0")
+    {
+        if (isNumber(byteOffset))
+        {
+            out << "    add " << targetRegister
+                << ", " << byteOffset << "\n";
+        }
+        else
+        {
+            int offset = getOffset(byteOffset);
+
+            out << "    mov ecx, DWORD PTR [rbp"
+                << offset
+                << "]\n";
+
+            out << "    add "
+                << targetRegister
+                << ", rcx\n";
+        }
+    }
+}
+
+// ============================================================
+// Store a 64-bit address in a normal stack slot
+// ============================================================
+
+void CodeGenerator::storeAddress(
+    ostream& out,
+    const string& name,
+    const string& sourceRegister)
+{
+    int offset = getOffset(name);
+
+    out << "    mov QWORD PTR [rbp"
+        << offset
+        << "], "
+        << sourceRegister
+        << "\n";
+}
 
 // ============================================================
 // Emit comparison branch
@@ -1153,7 +1268,67 @@ bool CodeGenerator::generate(
                 // LABEL
                 // ------------------------------------------------
 
-                case IROpcode::LABEL:
+                
+                case IROpcode::ARRAY_DECL:
+                {
+                    // Storage is reserved in the function prologue.
+                    break;
+                }
+
+                case IROpcode::ADDRESS:
+                {
+                    emitArrayAddress(
+                        out,
+                        inst.operand1,
+                        inst.operand2,
+                        "rax");
+
+                    storeAddress(
+                        out,
+                        inst.result,
+                        "rax");
+
+                    break;
+                }
+
+                case IROpcode::LOAD:
+                {
+                    int addressOffset = getOffset(inst.operand1);
+
+                    out << "    mov rax, QWORD PTR [rbp"
+                        << addressOffset
+                        << "]\n";
+
+                    out << "    mov eax, DWORD PTR [rax]\n";
+
+                    int resultOffset = getOffset(inst.result);
+
+                    out << "    mov DWORD PTR [rbp"
+                        << resultOffset
+                        << "], eax\n";
+
+                    break;
+                }
+
+                case IROpcode::STORE:
+                {
+                    int addressOffset = getOffset(inst.operand1);
+
+                    out << "    mov rax, QWORD PTR [rbp"
+                        << addressOffset
+                        << "]\n";
+
+                    emitOperand(
+                        out,
+                        inst.operand2,
+                        "ecx");
+
+                    out << "    mov DWORD PTR [rax], ecx\n";
+
+                    break;
+                }
+
+case IROpcode::LABEL:
                 {
                     out << inst.label << ":\n";
                     break;
@@ -1964,7 +2139,67 @@ bool CodeGenerator::generate(
                 // LABEL
                 // =================================================
 
-                case IROpcode::LABEL:
+                
+                case IROpcode::ARRAY_DECL:
+                {
+                    // Storage is reserved in the function prologue.
+                    break;
+                }
+
+                case IROpcode::ADDRESS:
+                {
+                    emitArrayAddress(
+                        out,
+                        inst.operand1,
+                        inst.operand2,
+                        "rax");
+
+                    storeAddress(
+                        out,
+                        inst.result,
+                        "rax");
+
+                    break;
+                }
+
+                case IROpcode::LOAD:
+                {
+                    int addressOffset = getOffset(inst.operand1);
+
+                    out << "    mov rax, QWORD PTR [rbp"
+                        << addressOffset
+                        << "]\n";
+
+                    out << "    mov eax, DWORD PTR [rax]\n";
+
+                    int resultOffset = getOffset(inst.result);
+
+                    out << "    mov DWORD PTR [rbp"
+                        << resultOffset
+                        << "], eax\n";
+
+                    break;
+                }
+
+                case IROpcode::STORE:
+                {
+                    int addressOffset = getOffset(inst.operand1);
+
+                    out << "    mov rax, QWORD PTR [rbp"
+                        << addressOffset
+                        << "]\n";
+
+                    emitOperand(
+                        out,
+                        inst.operand2,
+                        "ecx");
+
+                    out << "    mov DWORD PTR [rax], ecx\n";
+
+                    break;
+                }
+
+case IROpcode::LABEL:
                 {
                     out << inst.label << ":\n";
                     break;

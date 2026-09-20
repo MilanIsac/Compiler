@@ -118,12 +118,14 @@ void SemanticAnalyzer::exitScope()
     }
 }
 
-bool SemanticAnalyzer::declareVariable(const std::string& name, Type type)
+bool SemanticAnalyzer::declareVariable(
+    const std::string& name,
+    Type type,
+    bool isArray,
+    int arraySize)
 {
     if (scopes.empty())
-    {
         return false;
-    }
 
     auto& currentScope = scopes.back();
 
@@ -138,22 +140,33 @@ bool SemanticAnalyzer::declareVariable(const std::string& name, Type type)
         return false;
     }
 
-    currentScope[name] = type;
+    SymbolInfo info;
+    info.type = type;
+    info.isArray = isArray;
+    info.arraySize = arraySize;
+
+    currentScope[name] = info;
     return true;
 }
 
-Type SemanticAnalyzer::lookupVariable(const std::string& name)
+SymbolInfo SemanticAnalyzer::lookupSymbol(const std::string& name)
 {
     for (int i = static_cast<int>(scopes.size()) - 1; i >= 0; --i)
     {
         auto it = scopes[i].find(name);
+
         if (it != scopes[i].end())
         {
             return it->second;
         }
     }
 
-    return Type::UNKNOWN;
+    return SymbolInfo{};
+}
+
+Type SemanticAnalyzer::lookupVariable(const std::string& name)
+{
+    return lookupSymbol(name).type;
 }
 
 // ============================================================
@@ -390,10 +403,84 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
             break;
         }
 
+        case NodeType::ARRAY_DECL:
+        {
+            if (!node->left || !node->right)
+                break;
+
+            std::string arrayName = node->left->value;
+            Type elementType = stringToType(
+                node->value.empty() ? "int" : node->value);
+
+            int size = 0;
+
+            try
+            {
+                size = std::stoi(node->right->value);
+            }
+            catch (...)
+            {
+                size = 0;
+            }
+
+            if (elementType == Type::VOID)
+            {
+                std::cerr
+                    << "Type error: array '"
+                    << arrayName
+                    << "' cannot have element type void.\n";
+                ++errorCount;
+                break;
+            }
+
+            if (size <= 0)
+            {
+                std::cerr
+                    << "Semantic error: array '"
+                    << arrayName
+                    << "' must have a positive size.\n";
+                ++errorCount;
+                break;
+            }
+
+            declareVariable(
+                arrayName,
+                elementType,
+                true,
+                size);
+
+            break;
+        }
+
         case NodeType::ASSIGN:
         {
             if (!node->left)
             {
+                break;
+            }
+
+            // Array element assignment:
+            //     arr[i] = value;
+            if (node->left->type == NodeType::ARRAY_ACCESS)
+            {
+                Type elementType =
+                    evaluateNodeType(node->left);
+
+                Type actualType =
+                    evaluateNodeType(node->right);
+
+                if (!areTypesCompatible(elementType, actualType))
+                {
+                    std::cerr
+                        << "Type error: cannot assign "
+                        << typeToString(actualType)
+                        << " to array element of type "
+                        << typeToString(elementType)
+                        << ".\n";
+
+                    ++errorCount;
+                }
+
                 break;
             }
 
@@ -627,6 +714,53 @@ Type SemanticAnalyzer::evaluateNodeType(ASTNode* node)
         {
             node->inferredType = "bool";
             return Type::BOOL;
+        }
+
+        case NodeType::ARRAY_ACCESS:
+        {
+            SymbolInfo info =
+                lookupSymbol(node->value);
+
+            if (info.type == Type::UNKNOWN)
+            {
+                std::cerr
+                    << "Semantic error: array '"
+                    << node->value
+                    << "' used before declaration.\n";
+                ++errorCount;
+                return Type::UNKNOWN;
+            }
+
+            if (!info.isArray)
+            {
+                std::cerr
+                    << "Semantic error: '"
+                    << node->value
+                    << "' is not an array.\n";
+                ++errorCount;
+                return Type::TYPE_ERROR;
+            }
+
+            Type indexType =
+                evaluateNodeType(node->left);
+
+            if (indexType != Type::INT &&
+                indexType != Type::CHAR &&
+                indexType != Type::UNKNOWN &&
+                indexType != Type::TYPE_ERROR)
+            {
+                std::cerr
+                    << "Type error: array index for '"
+                    << node->value
+                    << "' must be an integer.\n";
+                ++errorCount;
+                return Type::TYPE_ERROR;
+            }
+
+            node->inferredType =
+                typeToString(info.type);
+
+            return info.type;
         }
 
         case NodeType::IDENTIFIER:

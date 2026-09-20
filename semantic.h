@@ -30,6 +30,13 @@ enum class Type : uint8_t
 // Function information
 // ============================================================
 
+struct SymbolInfo
+{
+    Type type = Type::UNKNOWN;
+    bool isArray = false;
+    int arraySize = 0;
+};
+
 struct FunctionInfo
 {
     Type returnType = Type::INT;
@@ -51,7 +58,7 @@ private:
     // Stack of lexical scopes: variable name -> Type enum
     // --------------------------------------------------------
     std::vector<
-        std::unordered_map<std::string, Type>
+        std::unordered_map<std::string, SymbolInfo>
     > scopes;
 
     // --------------------------------------------------------
@@ -84,7 +91,14 @@ private:
     void enterScope();
     void exitScope();
 
-    bool declareVariable(const std::string& name, Type type);
+    bool declareVariable(
+        const std::string& name,
+        Type type,
+        bool isArray = false,
+        int arraySize = 0
+    );
+
+    SymbolInfo lookupSymbol(const std::string& name);
     Type lookupVariable(const std::string& name);
 
 public:

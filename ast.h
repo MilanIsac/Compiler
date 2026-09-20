@@ -22,6 +22,9 @@ enum class NodeType
     ASSIGN,
     VAR_DECL,
 
+    ARRAY_DECL,
+    ARRAY_ACCESS,
+
     IF,
     WHILE,
     FOR,
@@ -202,6 +205,26 @@ inline void printAST(const ASTNode* node, int depth = 0)
             printAST(child, depth + 1);
         }
 
+        return;
+    }
+
+    // ARRAY ACCESS
+    if (node->type == NodeType::ARRAY_ACCESS)
+    {
+        for (int i = 0; i < depth + 1; ++i)
+            std::cout << "  ";
+        std::cout << "INDEX\n";
+        printAST(node->left, depth + 2);
+        return;
+    }
+
+    // ARRAY DECLARATION
+    if (node->type == NodeType::ARRAY_DECL)
+    {
+        for (int i = 0; i < depth + 1; ++i)
+            std::cout << "  ";
+        std::cout << "SIZE\n";
+        printAST(node->right, depth + 2);
         return;
     }
 
