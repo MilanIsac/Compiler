@@ -22,6 +22,7 @@ enum class Type : uint8_t
     CHAR,
     FLOAT,
     DOUBLE,
+    POINTER,
     UNKNOWN,
     TYPE_ERROR
 };
@@ -33,8 +34,11 @@ enum class Type : uint8_t
 struct SymbolInfo
 {
     Type type = Type::UNKNOWN;
+    std::string typeStr;
     bool isArray = false;
     int arraySize = 0;
+    bool isPointer = false;
+    Type pointsTo = Type::UNKNOWN;
 };
 
 struct FunctionInfo
@@ -95,7 +99,9 @@ private:
         const std::string& name,
         Type type,
         bool isArray = false,
-        int arraySize = 0
+        int arraySize = 0,
+        const std::string& typeStr = "",
+        Type pointsTo = Type::UNKNOWN
     );
 
     SymbolInfo lookupSymbol(const std::string& name);

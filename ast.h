@@ -25,6 +25,9 @@ enum class NodeType
     ARRAY_DECL,
     ARRAY_ACCESS,
 
+    ADDRESS_OF,
+    DEREFERENCE,
+
     IF,
     WHILE,
     FOR,
@@ -76,6 +79,26 @@ inline void freeAST(ASTNode* node)
     }
 
     delete node;
+}
+
+inline ASTNode* cloneAST(const ASTNode* node)
+{
+    if (!node)
+        return nullptr;
+
+    ASTNode* copy = new ASTNode(node->type, node->value);
+    copy->inferredType = node->inferredType;
+    copy->left = cloneAST(node->left);
+    copy->right = cloneAST(node->right);
+    copy->third = cloneAST(node->third);
+    copy->fourth = cloneAST(node->fourth);
+
+    for (const ASTNode* child : node->children)
+    {
+        copy->children.push_back(cloneAST(child));
+    }
+
+    return copy;
 }
 
 // ============================================================
@@ -225,6 +248,20 @@ inline void printAST(const ASTNode* node, int depth = 0)
             std::cout << "  ";
         std::cout << "SIZE\n";
         printAST(node->right, depth + 2);
+        return;
+    }
+
+    // ADDRESS OF (&x)
+    if (node->type == NodeType::ADDRESS_OF)
+    {
+        printAST(node->left, depth + 1);
+        return;
+    }
+
+    // DEREFERENCE (*p)
+    if (node->type == NodeType::DEREFERENCE)
+    {
+        printAST(node->left, depth + 1);
         return;
     }
 

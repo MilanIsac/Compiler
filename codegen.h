@@ -5,6 +5,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <ostream>
 
@@ -16,6 +17,10 @@ private:
     // Base stack offset and element count for arrays.
     std::unordered_map<std::string, int> arrayOffsets;
     std::unordered_map<std::string, int> arraySizes;
+
+    // Set of variables and temporaries that hold 64-bit pointers
+    std::unordered_set<std::string> pointerVars;
+    bool usesPrint = false;
 
     // Current stack size in bytes.
     int stackSize;

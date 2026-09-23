@@ -298,6 +298,36 @@ Token Lexer::nextToken()
         return stringLiteral();
     }
 
+    // Character literal ('a', '\n')
+    if (ch == '\'')
+    {
+        advance(); // consume opening '
+        char c = '\0';
+        if (!isAtEnd())
+        {
+            c = advance();
+            if (c == '\\' && !isAtEnd())
+            {
+                char esc = advance();
+                switch (esc)
+                {
+                    case 'n': c = '\n'; break;
+                    case 't': c = '\t'; break;
+                    case 'r': c = '\r'; break;
+                    case '\\': c = '\\'; break;
+                    case '\'': c = '\''; break;
+                    case '0': c = '\0'; break;
+                    default: c = esc; break;
+                }
+            }
+        }
+        if (!isAtEnd() && peek() == '\'')
+        {
+            advance(); // consume closing '
+        }
+        return {TokenType::NUMBER, std::to_string(static_cast<int>(static_cast<unsigned char>(c))), line};
+    }
+
     // Check two-character operators
     char next = peekNext();
     if (next != '\0')

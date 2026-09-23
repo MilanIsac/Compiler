@@ -107,6 +107,75 @@ std::string IRGenerator::generateExpression(ASTNode* node)
         return value;
     }
 
+    // --------------------------------------------------------
+    // Address-of: &x, &arr[i]
+    // --------------------------------------------------------
+    if (node->type == NodeType::ADDRESS_OF)
+    {
+        if (!node->left)
+            return "";
+
+        if (node->left->type == NodeType::IDENTIFIER)
+        {
+            std::string address = newTemp();
+            instructions.push_back({
+                IROpcode::ADDRESS,
+                address,
+                node->left->value,
+                "0",
+                ""
+            });
+            return address;
+        }
+
+        if (node->left->type == NodeType::ARRAY_ACCESS)
+        {
+            std::string index = generateExpression(node->left->left);
+            std::string offset = newTemp();
+            instructions.push_back({
+                IROpcode::MUL,
+                offset,
+                index,
+                "4",
+                ""
+            });
+            std::string address = newTemp();
+            instructions.push_back({
+                IROpcode::ADDRESS,
+                address,
+                node->left->value,
+                offset,
+                ""
+            });
+            return address;
+        }
+
+        if (node->left->type == NodeType::DEREFERENCE)
+        {
+            // &*p is just p
+            return generateExpression(node->left->left);
+        }
+
+        return "";
+    }
+
+    // --------------------------------------------------------
+    // Dereference: *p
+    // --------------------------------------------------------
+    if (node->type == NodeType::DEREFERENCE)
+    {
+        std::string ptr = generateExpression(node->left);
+        std::string val = newTemp();
+        instructions.push_back({
+            IROpcode::LOAD,
+            val,
+            ptr,
+            "",
+            ""
+        });
+        return val;
+    }
+
     if (node->type == NodeType::BINARY_OP)
     {
         std::string left = generateExpression(node->left);
@@ -598,6 +667,24 @@ void IRGenerator::generate(ASTNode* node)
                 offset,
                 ""
             });
+
+            instructions.push_back({
+                IROpcode::STORE,
+                "",
+                address,
+                value,
+                ""
+            });
+
+            return;
+        }
+
+        // Dereference assignment:
+        //     *p = value;
+        if (node->left->type == NodeType::DEREFERENCE)
+        {
+            std::string address =
+                generateExpression(node->left->left);
 
             instructions.push_back({
                 IROpcode::STORE,

@@ -320,6 +320,31 @@ ASTNode* Parser::unary()
         return node;
     }
 
+    if (match("~"))
+    {
+        ASTNode* right = unary();
+        ASTNode* node = new ASTNode(NodeType::BINARY_OP, "^");
+        node->left = right;
+        node->right = new ASTNode(NodeType::NUMBER, "-1");
+        return node;
+    }
+
+    if (match("&"))
+    {
+        ASTNode* right = unary();
+        ASTNode* node = new ASTNode(NodeType::ADDRESS_OF, "&");
+        node->left = right;
+        return node;
+    }
+
+    if (match("*"))
+    {
+        ASTNode* right = unary();
+        ASTNode* node = new ASTNode(NodeType::DEREFERENCE, "*");
+        node->left = right;
+        return node;
+    }
+
     if (match("++"))
     {
         ASTNode* right = unary();
@@ -604,6 +629,11 @@ ASTNode* Parser::expression()
 ASTNode* Parser::varDeclaration()
 {
     Token typeTok = advance();
+    std::string fullType = typeTok.value;
+    while (match("*"))
+    {
+        fullType += "*";
+    }
 
     Token idTok = peek();
 
@@ -613,7 +643,7 @@ ASTNode* Parser::varDeclaration()
             << "Parser error [line "
             << idTok.line
             << "]: expected identifier after type '"
-            << typeTok.value
+            << fullType
             << "'\n";
         return nullptr;
     }
@@ -650,7 +680,7 @@ ASTNode* Parser::varDeclaration()
         match(";");
 
         ASTNode* decl =
-            new ASTNode(NodeType::ARRAY_DECL, typeTok.value);
+            new ASTNode(NodeType::ARRAY_DECL, fullType);
 
         decl->left =
             new ASTNode(NodeType::IDENTIFIER, idTok.value);
@@ -674,7 +704,7 @@ ASTNode* Parser::varDeclaration()
     match(";");
 
     ASTNode* decl =
-        new ASTNode(NodeType::VAR_DECL, typeTok.value);
+        new ASTNode(NodeType::VAR_DECL, fullType);
 
     decl->left =
         new ASTNode(NodeType::IDENTIFIER, idTok.value);
@@ -690,6 +720,68 @@ ASTNode* Parser::varDeclaration()
 
 ASTNode* Parser::assignmentOrExpr()
 {
+    // --------------------------------------------------------
+    // Pointer dereference assignment: *p = value; *p += value;
+    // --------------------------------------------------------
+    if (check("*"))
+    {
+        advance(); // consume '*'
+        ASTNode* target = unary();
+        ASTNode* deref = new ASTNode(NodeType::DEREFERENCE, "*");
+        deref->left = target;
+
+        if (match("="))
+        {
+            ASTNode* rhs = expression();
+            match(";");
+
+            ASTNode* assign = new ASTNode(NodeType::ASSIGN, "=");
+            assign->left = deref;
+            assign->right = rhs;
+            return assign;
+        }
+
+        if (check("+=") || check("-=") ||
+            check("*=") || check("/=") ||
+            check("%="))
+        {
+            std::string opStr = advance().value;
+            char mathOp = opStr[0];
+
+            ASTNode* rhs = expression();
+            match(";");
+
+            ASTNode* binOp = new ASTNode(NodeType::BINARY_OP, std::string(1, mathOp));
+            binOp->left = cloneAST(deref);
+            binOp->right = rhs;
+
+            ASTNode* assign = new ASTNode(NodeType::ASSIGN, "=");
+            assign->left = deref;
+            assign->right = binOp;
+            return assign;
+        }
+
+        if (check("++") || check("--"))
+        {
+            std::string incOp = advance().value;
+            match(";");
+
+            std::string mathOp = (incOp == "++") ? "+" : "-";
+
+            ASTNode* binOp = new ASTNode(NodeType::BINARY_OP, mathOp);
+            binOp->left = cloneAST(deref);
+            binOp->right = new ASTNode(NodeType::NUMBER, "1");
+
+            ASTNode* assign = new ASTNode(NodeType::ASSIGN, "=");
+            assign->left = deref;
+            assign->right = binOp;
+            return assign;
+        }
+
+        match(";");
+        return deref;
+    }
+
     Token id = peek();
 
     if (id.type == TokenType::IDENTIFIER)
@@ -750,63 +842,38 @@ ASTNode* Parser::assignmentOrExpr()
                         NodeType::BINARY_OP,
                         std::string(1, mathOp));
 
-                // The array access is the left operand.
-                binOp->left = access;
+                binOp->left = cloneAST(access);
                 binOp->right = rhs;
 
-                // Make a second access node using the same index tree.
-                ASTNode* lhs =
-                    new ASTNode(NodeType::ARRAY_ACCESS, id.value);
-
-                lhs->left = nullptr;
-
-                // We need the index twice, so build a small duplicate
-                // from the original index when possible.
-                // For general expressions, parse-time duplication is
-                // not needed here because compound array assignment
-                // is primarily intended for simple indexes.
-                //
-                // Use the already-built access as the assignment LHS
-                // and rebuild the binary LHS with the same index by
-                // transferring ownership.
-                ASTNode* originalIndex = binOp->left->left;
-
-                lhs->left = originalIndex;
-                binOp->left->left = nullptr;
-
-                delete binOp->left;
-                binOp->left = new ASTNode(NodeType::ARRAY_ACCESS, id.value);
-
-                // The binary expression needs the same index. Rebuild
-                // it by parsing structure is not possible after parsing,
-                // so for compound array assignments use a direct
-                // array-access assignment form below.
-                //
-                // Reconstruct:
-                // arr[i] = arr[i] + rhs
-                ASTNode* readAccess =
-                    new ASTNode(NodeType::ARRAY_ACCESS, id.value);
-
-                // For this implementation, the index is transferred
-                // to the read access and copied into lhs using a
-                // simple NUMBER fallback only when the index was a
-                // literal. General compound indexes are better handled
-                // with normal '=' assignments for now.
-                readAccess->left = lhs->left;
-
-                lhs->left = nullptr;
-
-                ASTNode* finalAssign =
+                ASTNode* assign =
                     new ASTNode(NodeType::ASSIGN, "=");
 
-                finalAssign->left = readAccess;
-                finalAssign->right = rhs;
+                assign->left = access;
+                assign->right = binOp;
 
-                delete lhs;
-                delete binOp;
-                delete access;
+                return assign;
+            }
 
-                return finalAssign;
+            if (check("++") || check("--"))
+            {
+                std::string incOp = advance().value;
+                match(";");
+
+                std::string mathOp = (incOp == "++") ? "+" : "-";
+
+                ASTNode* binOp =
+                    new ASTNode(NodeType::BINARY_OP, mathOp);
+
+                binOp->left = cloneAST(access);
+                binOp->right = new ASTNode(NodeType::NUMBER, "1");
+
+                ASTNode* assign =
+                    new ASTNode(NodeType::ASSIGN, "=");
+
+                assign->left = access;
+                assign->right = binOp;
+
+                return assign;
             }
 
             match(";");
@@ -1202,21 +1269,18 @@ ASTNode* Parser::statement()
         }
                 if (isTypeKeyword(t))
         {
-            // If:
-            //
-            // int name (
-            //
-            // then this is a function definition.
+            size_t savedPos = pos;
 
-            if (peekNext().type == TokenType::IDENTIFIER)
+            advance(); // type
+            while (check("*"))
             {
-                size_t savedPos = pos;
+                advance();
+            }
 
-                advance(); // type
+            if (peek().type == TokenType::IDENTIFIER)
+            {
                 advance(); // identifier
-
                 bool isFunction = check("(");
-
                 pos = savedPos;
 
                 if (isFunction)
@@ -1225,6 +1289,7 @@ ASTNode* Parser::statement()
                 }
             }
 
+            pos = savedPos;
             return varDeclaration();
         }
     }
@@ -1235,7 +1300,8 @@ ASTNode* Parser::statement()
     }
 
     if (t.type == TokenType::IDENTIFIER || t.type == TokenType::NUMBER ||
-        t.type == TokenType::STRING || check("(") || check("!") || check("-") || check("+"))
+        t.type == TokenType::STRING || check("(") || check("!") || check("-") ||
+        check("+") || check("*") || check("&") || check("~"))
     {
         return assignmentOrExpr();
     }
@@ -1280,6 +1346,11 @@ bool Parser::isTypeKeyword(const Token& token) const
 ASTNode* Parser::parseFunction()
 {
     Token returnType = advance();
+    std::string fullReturnType = returnType.value;
+    while (match("*"))
+    {
+        fullReturnType += "*";
+    }
 
     Token name = peek();
 
@@ -1310,7 +1381,7 @@ ASTNode* Parser::parseFunction()
 
     // Store return type in fourth field.
     function->fourth =
-        new ASTNode(NodeType::IDENTIFIER, returnType.value);
+        new ASTNode(NodeType::IDENTIFIER, fullReturnType);
 
     // ========================================================
     // Parameters
@@ -1334,6 +1405,11 @@ ASTNode* Parser::parseFunction()
             }
 
             advance();
+            std::string fullParamType = paramType.value;
+            while (match("*"))
+            {
+                fullParamType += "*";
+            }
 
             Token paramName = peek();
 
@@ -1356,7 +1432,7 @@ ASTNode* Parser::parseFunction()
             // Parameter type is stored in the parameter's
             // fourth field.
             parameter->fourth =
-                new ASTNode(NodeType::IDENTIFIER, paramType.value);
+                new ASTNode(NodeType::IDENTIFIER, fullParamType);
 
             function->children.push_back(parameter);
 

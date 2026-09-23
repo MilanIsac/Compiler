@@ -31,6 +31,8 @@ Type SemanticAnalyzer::stringToType(const std::string& str)
     if (str == "char")   return Type::CHAR;
     if (str == "float")  return Type::FLOAT;
     if (str == "double") return Type::DOUBLE;
+    if (!str.empty() && str.back() == '*') return Type::POINTER;
+    if (str == "pointer") return Type::POINTER;
     return Type::UNKNOWN;
 }
 
@@ -49,6 +51,7 @@ std::string SemanticAnalyzer::typeToString(Type t)
         case Type::CHAR:       return "char";
         case Type::FLOAT:      return "float";
         case Type::DOUBLE:     return "double";
+        case Type::POINTER:    return "pointer";
         default:               return "unknown";
     }
 }
@@ -122,7 +125,9 @@ bool SemanticAnalyzer::declareVariable(
     const std::string& name,
     Type type,
     bool isArray,
-    int arraySize)
+    int arraySize,
+    const std::string& typeStr,
+    Type pointsTo)
 {
     if (scopes.empty())
         return false;
@@ -144,6 +149,9 @@ bool SemanticAnalyzer::declareVariable(
     info.type = type;
     info.isArray = isArray;
     info.arraySize = arraySize;
+    info.isPointer = (type == Type::POINTER);
+    info.typeStr = typeStr.empty() ? typeToString(type) : typeStr;
+    info.pointsTo = pointsTo;
 
     currentScope[name] = info;
     return true;
@@ -204,6 +212,28 @@ bool SemanticAnalyzer::analyze(const std::vector<ASTNode*>& statements)
 
 void SemanticAnalyzer::collectFunctions(const std::vector<ASTNode*>& statements)
 {
+    // Register built-in I/O functions
+    if (functionTable.find("print") == functionTable.end())
+    {
+        FunctionInfo pInfo;
+        pInfo.returnType = Type::VOID;
+        pInfo.returnTypeStr = "void";
+        pInfo.parameterNames.push_back("x");
+        pInfo.parameterTypes.push_back(Type::INT);
+        pInfo.parameterTypeStrings.push_back("int");
+        functionTable["print"] = pInfo;
+    }
+    if (functionTable.find("printInt") == functionTable.end())
+    {
+        FunctionInfo pInfo;
+        pInfo.returnType = Type::VOID;
+        pInfo.returnTypeStr = "void";
+        pInfo.parameterNames.push_back("x");
+        pInfo.parameterTypes.push_back(Type::INT);
+        pInfo.parameterTypeStrings.push_back("int");
+        functionTable["printInt"] = pInfo;
+    }
+
     for (ASTNode* node : statements)
     {
         if (!node || node->type != NodeType::FUNCTION)
@@ -322,9 +352,24 @@ void SemanticAnalyzer::analyzeFunction(ASTNode* node)
 
     for (size_t i = 0; i < functionIt->second.parameterNames.size(); ++i)
     {
+        Type pType = functionIt->second.parameterTypes[i];
+        std::string pStr = functionIt->second.parameterTypeStrings[i];
+        Type pointsTo = Type::UNKNOWN;
+        if (pType == Type::POINTER)
+        {
+            std::string base = pStr;
+            while (!base.empty() && base.back() == '*')
+                base.pop_back();
+            pointsTo = stringToType(base);
+        }
+
         declareVariable(
             functionIt->second.parameterNames[i],
-            functionIt->second.parameterTypes[i]
+            pType,
+            false,
+            0,
+            pStr,
+            pointsTo
         );
     }
 
@@ -367,6 +412,14 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
             std::string variableName = node->left->value;
             std::string declaredTypeStr = node->value.empty() ? "int" : node->value;
             Type declaredType = stringToType(declaredTypeStr);
+            Type pointsTo = Type::UNKNOWN;
+            if (declaredType == Type::POINTER)
+            {
+                std::string base = declaredTypeStr;
+                while (!base.empty() && base.back() == '*')
+                    base.pop_back();
+                pointsTo = stringToType(base);
+            }
 
             if (declaredType == Type::VOID)
             {
@@ -379,7 +432,7 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
                 break;
             }
 
-            declareVariable(variableName, declaredType);
+            declareVariable(variableName, declaredType, false, 0, declaredTypeStr, pointsTo);
 
             if (node->right)
             {
@@ -476,6 +529,31 @@ void SemanticAnalyzer::analyzeNode(ASTNode* node)
                         << typeToString(actualType)
                         << " to array element of type "
                         << typeToString(elementType)
+                        << ".\n";
+
+                    ++errorCount;
+                }
+
+                break;
+            }
+
+            // Dereference assignment:
+            //     *p = value;
+            if (node->left->type == NodeType::DEREFERENCE)
+            {
+                Type targetType =
+                    evaluateNodeType(node->left);
+
+                Type actualType =
+                    evaluateNodeType(node->right);
+
+                if (!areTypesCompatible(targetType, actualType))
+                {
+                    std::cerr
+                        << "Type error: cannot assign "
+                        << typeToString(actualType)
+                        << " to dereferenced pointer of type "
+                        << typeToString(targetType)
                         << ".\n";
 
                     ++errorCount;
@@ -761,6 +839,56 @@ Type SemanticAnalyzer::evaluateNodeType(ASTNode* node)
                 typeToString(info.type);
 
             return info.type;
+        }
+
+        case NodeType::ADDRESS_OF:
+        {
+            if (!node->left)
+            {
+                return Type::TYPE_ERROR;
+            }
+
+            if (node->left->type != NodeType::IDENTIFIER &&
+                node->left->type != NodeType::ARRAY_ACCESS &&
+                node->left->type != NodeType::DEREFERENCE)
+            {
+                std::cerr << "Semantic error: cannot take address of non-lvalue.\n";
+                ++errorCount;
+                return Type::TYPE_ERROR;
+            }
+
+            Type innerType = evaluateNodeType(node->left);
+            node->inferredType = typeToString(innerType) + "*";
+            return Type::POINTER;
+        }
+
+        case NodeType::DEREFERENCE:
+        {
+            if (!node->left)
+            {
+                return Type::TYPE_ERROR;
+            }
+
+            Type ptrType = evaluateNodeType(node->left);
+            if (ptrType != Type::POINTER && ptrType != Type::UNKNOWN && ptrType != Type::TYPE_ERROR)
+            {
+                std::cerr << "Type error: cannot dereference non-pointer type '"
+                          << typeToString(ptrType) << "'.\n";
+                ++errorCount;
+                return Type::TYPE_ERROR;
+            }
+
+            Type pointedType = Type::INT;
+            if (node->left->type == NodeType::IDENTIFIER)
+            {
+                SymbolInfo info = lookupSymbol(node->left->value);
+                if (info.pointsTo != Type::UNKNOWN)
+                {
+                    pointedType = info.pointsTo;
+                }
+            }
+            node->inferredType = typeToString(pointedType);
+            return pointedType;
         }
 
         case NodeType::IDENTIFIER:
